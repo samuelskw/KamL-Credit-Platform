@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ledgerlight – Credit score, risk pricing and loan offers</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#eef2f5;--card:#fff;--ink:#10202b;--mute:#5b6b77;--line:#d5dde3;--acc:#0b6e6e;--acc2:#e0f1f0;--good:#1d8a4e;--mid:#b7791f;--bad:#c0392b}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1a22;--card:#15252f;--ink:#e8eff3;--mute:#9bb0bd;--line:#27404e;--acc:#4fc3c0;--acc2:#12363a;--good:#4cc783;--mid:#e5ad4a;--bad:#ef7d6f}}
+:root[data-theme="dark"]{--bg:#0e1a22;--card:#15252f;--ink:#e8eff3;--mute:#9bb0bd;--line:#27404e;--acc:#4fc3c0;--acc2:#12363a;--good:#4cc783;--mid:#e5ad4a;--bad:#ef7d6f}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:28px;margin:0 0 4px;letter-spacing:-.02em}h2{font-size:19px;margin:0 0 4px}h3{font-size:15px;margin:0}
+p{margin:0}.mute{color:var(--mute)}.small{font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:16px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:14px}
+.seg button{border:0;background:transparent;color:var(--ink);padding:9px 18px;font:inherit;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--acc);color:#fff}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px 22px;margin-top:12px}
+.grp{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.fld label{display:flex;justify-content:space-between;gap:8px;font-weight:500}
+.fld output{color:var(--acc);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--acc)}
+input[type=number],select{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+.two{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:22px;align-items:start}
+@media(max-width:720px){.two{grid-template-columns:1fr}}
+.gauge{text-align:center}.gauge .n{font-size:52px;font-weight:600;line-height:1;margin-top:-34px;font-variant-numeric:tabular-nums}
+.band{display:inline-block;padding:2px 12px;border-radius:20px;font-weight:600;margin-top:8px;background:var(--acc2);color:var(--acc)}
+.fx{border-top:1px solid var(--line);padding:11px 0}.fx:first-child{border-top:0}
+.fx .top{display:flex;justify-content:space-between;gap:10px;font-weight:500}
+.bar{height:7px;background:var(--line);border-radius:4px;margin:6px 0;overflow:hidden}.bar i{display:block;height:100%;border-radius:4px}
+.tag{font-size:12px;color:var(--mute);border:1px solid var(--line);border-radius:4px;padding:0 6px;margin-left:6px;font-weight:400}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:12px}
+.stat{background:var(--bg);border-radius:8px;padding:10px 12px}.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+td,th{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}th{font-weight:500;color:var(--mute)}
+.offer{display:grid;grid-template-columns:1.2fr repeat(4,1fr) auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:10px}
+.offer.best{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}.offer.no{opacity:.6}
+.offer .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+.pill{font-size:12px;background:var(--acc);color:#fff;border-radius:4px;padding:1px 7px;margin-left:6px}
+.btn{background:var(--acc);color:#fff;border:0;border-radius:7px;padding:9px 16px;font:inherit;cursor:pointer}
+.btn:disabled{background:var(--line);color:var(--mute);cursor:not-allowed}
+@media(max-width:820px){.offer{grid-template-columns:1fr 1fr}.offer>:first-child,.offer>:last-child{grid-column:1/-1}}
+details summary{cursor:pointer;font-weight:500}
+</style></head><body><div class="wrap">
+<h1>Ledgerlight</h1>
+<p class="mute">Score a person or a business, see why, see how lenders price the risk, then compare loan offers.</p>
+<div class="seg" role="group" aria-label="Applicant type"><button id="bi" aria-pressed="true">Individual</button><button id="bb" aria-pressed="false">Business</button></div>
+
+<section class="card"><h2>1. Your data</h2>
+<p class="mute small">Move the sliders to match the applicant. Each input shows its data category. Everything is computed in your browser and nothing is sent anywhere.</p>
+<div id="form"></div>
+<details class="grp"><summary>Data this platform uses</summary><div id="used" class="small mute" style="margin-top:8px"></div></details></section>
+
+<section class="card"><h2>2. Credit score and why</h2>
+<div class="two"><div class="gauge" id="gauge"></div><div id="why"></div></div></section>
+
+<section class="card"><h2>3. Lender risk assessment</h2>
+<p class="mute small">Banks turn the score into a probability of default, then build the interest rate from four parts.</p>
+<div class="stats" id="risk"></div><div class="tw" style="margin-top:12px" id="build"></div>
+<p class="mute small" style="margin-top:10px" id="riskNote"></p></section>
+
+<section class="card"><h2>4. Loan offers</h2>
+<div class="grid" style="margin-top:6px">
+<div class="fld"><label for="amt">Amount <output id="amtO"></output></label><input type="range" id="amt" min="1000" max="250000" step="500"></div>
+<div class="fld"><label for="trm">Term <output id="trmO"></output></label><input type="range" id="trm" min="6" max="84" step="6"></div>
+<div class="fld"><label for="sort">Sort by</label><select id="sort"><option value="apr">Lowest APR</option><option value="pay">Lowest monthly payment</option><option value="cost">Lowest total cost</option></select></div></div>
+<div id="offers"></div>
+<p class="mute small" style="margin-top:14px">Illustrative model. Lenders are fictional and rates are not real quotes. A real decision needs consent, identity checks, and verified bureau data, and must follow lending and fair-credit laws.</p></section>
+</div>
+<script>
+const clamp=(x,a=0,b=1)=>Math.max(a,Math.min(b,x));
+const pct=v=>v+"%",num=v=>v,yrs=v=>v+" yrs",mo=v=>"£"+Number(v).toLocaleString("en-GB");
+const gbp=v=>"£"+Math.round(v).toLocaleString("en-GB");
+// Each factor: k, label, cat (data category), min,max,step,def, fmt, w (weight), s (0..1 subscore), good, bad
+const IND=[
+{k:"pay",label:"On-time payments, last 24 months",cat:"Payment history",min:70,max:100,step:1,def:96,fmt:pct,w:25,s:v=>clamp((v-80)/20)**1.5,good:"You pay almost everything on time, the single strongest signal in any score.",bad:"Late payments are the biggest drag on your score. Set up direct debits for at least the minimum due."},
+{k:"util",label:"Credit limit used",cat:"Credit accounts",min:0,max:100,step:1,def:35,fmt:pct,w:20,s:v=>1-clamp(v/75),good:"You use only a small share of your available credit.",bad:"You use a lot of your available limit. Paying balances below 30% lifts your score quickly."},
+{k:"age",label:"Length of credit history",cat:"Credit accounts",min:0,max:30,step:1,def:6,fmt:yrs,w:8,s:v=>clamp(Math.sqrt(v/15)),good:"A long history gives lenders more evidence to rely on.",bad:"Your history is short. Keep old accounts open so the average age grows."},
+{k:"inq",label:"Credit applications, last 12 months",cat:"Credit accounts",min:0,max:12,step:1,def:2,fmt:num,w:4,s:v=>1-clamp(v/8),good:"Few recent applications.",bad:"Many recent applications suggest you are seeking credit under pressure. Space them out."},
+{k:"mix",label:"Types of credit held",cat:"Credit accounts",min:1,max:6,step:1,def:3,fmt:num,w:4,s:v=>clamp((v-1)/3),good:"You manage a healthy mix of credit types.",bad:"A single credit type gives lenders little to compare. A mix of cards and instalment loans helps over time."},
+{k:"dti",label:"Debt payments as share of income",cat:"Financial data",calc:s=>s.debt/s.inc*100,fmt:v=>v.toFixed(0)+"%",w:10,s:v=>1-clamp(v/60),good:"Your debt payments leave plenty of income free.",bad:"A large part of your income already goes on debt. Paying down the smallest balances first reduces this."},
+{k:"sav",label:"Savings rate (share of income saved)",cat:"Spending habits",min:-10,max:40,step:1,def:8,fmt:pct,w:6,s:v=>clamp((v+5)/25),good:"You save regularly, which shows resilience to shocks.",bad:"You save little or dip into savings. A small automatic transfer each payday builds a buffer."},
+{k:"disc",label:"Discretionary share of spending",cat:"Spending habits",min:0,max:80,step:1,def:30,fmt:pct,w:4,s:v=>1-clamp(v/70),good:"Most of your spending goes to essentials.",bad:"A high share of spending is on non-essentials, which leaves less room if income falls."},
+{k:"od",label:"Overdrafts or bounced payments, last 12 months",cat:"Spending habits",min:0,max:12,step:1,def:1,fmt:num,w:5,s:v=>1-clamp(v/5),good:"Rare overdrafts. Your account is well managed.",bad:"Frequent overdrafts signal cash-flow strain. Low-balance alerts help avoid them."},
+{k:"emp",label:"Time in current job",cat:"Personal data",min:0,max:20,step:1,def:3,fmt:yrs,w:4,s:v=>clamp(v/6),good:"Stable employment supports steady repayments.",bad:"A short time in your current job reads as less stable income to a lender."},
+{k:"rent",label:"On-time rent and utility payments",cat:"Alternative data",min:70,max:100,step:1,def:98,fmt:pct,w:4,s:v=>clamp((v-80)/20)**1.5,good:"Reliable rent and bill payments add positive evidence.",bad:"Late rent or bills count as evidence of repayment risk."},
+{k:"der",label:"Defaults, CCJs or collections",cat:"Public records",min:0,max:5,step:1,def:0,fmt:num,w:6,s:v=>1-clamp(v/2),good:"A clean public record.",bad:"Defaults and court judgments stay on file for years. Settling them and keeping a clean run is the way back."}];
+const BUS=[
+{k:"pay",label:"Suppliers paid on time",cat:"Payment history",min:60,max:100,step:1,def:92,fmt:pct,w:18,s:v=>clamp((v-75)/25)**1.5,good:"You pay suppliers reliably.",bad:"Late supplier payments are reported to trade bureaus and hurt your rating."},
+{k:"dscr",label:"Debt service coverage (cash flow ÷ debt payments)",cat:"Financial data",calc:s=>s.debt>0?s.inc/s.debt:3,fmt:v=>v.toFixed(2)+"×",w:16,s:v=>clamp((v-0.8)/1.2),good:"Cash flow comfortably covers debt payments.",bad:"Cash flow barely covers debt payments. Lenders usually want at least 1.25×."},
+{k:"de",label:"Debt-to-equity ratio",cat:"Financial data",min:0,max:5,step:0.1,def:1.5,fmt:v=>(+v).toFixed(1)+"×",w:10,s:v=>1-clamp(v/3.5),good:"Modest leverage.",bad:"The business relies heavily on borrowed money relative to owner equity."},
+{k:"age",label:"Years trading",cat:"Business profile",min:0,max:25,step:1,def:4,fmt:yrs,w:8,s:v=>clamp(v/10),good:"An established trading record.",bad:"Young businesses fail more often, so lenders price in extra risk."},
+{k:"gro",label:"Revenue growth, year on year",cat:"Financial data",min:-20,max:50,step:1,def:8,fmt:pct,w:8,s:v=>clamp((v+10)/30),good:"Revenue is growing.",bad:"Flat or falling revenue raises doubts about future repayment."},
+{k:"cur",label:"Current ratio (assets ÷ liabilities due within a year)",cat:"Financial data",min:0.3,max:3,step:0.1,def:1.3,fmt:v=>(+v).toFixed(1),w:8,s:v=>clamp((v-0.7)/1.3),good:"Short-term assets cover short-term bills.",bad:"Short-term liabilities are close to or above short-term assets."},
+{k:"cash",label:"Cash reserves (days of operating costs)",cat:"Spending habits",min:0,max:180,step:5,def:45,fmt:v=>v+" days",w:8,s:v=>clamp(v/90),good:"A healthy cash buffer.",bad:"A thin cash buffer. Aim for 60 to 90 days of costs."},
+{k:"own",label:"Owner’s personal credit score",cat:"Personal data",min:500,max:800,step:5,def:690,fmt:num,w:6,s:v=>clamp((v-550)/200),good:"Strong owner credit supports the business.",bad:"Small-business lenders also look at the owner’s personal credit."},
+{k:"ind",label:"Industry risk (1 low, 5 high)",cat:"Business profile",min:1,max:5,step:1,def:3,fmt:num,w:6,s:v=>1-clamp((v-1)/4),good:"A lower-risk sector.",bad:"Your sector has higher failure rates, which lenders price in."},
+{k:"con",label:"Revenue from the largest customer",cat:"Business profile",min:0,max:100,step:1,def:30,fmt:pct,w:6,s:v=>1-clamp(v/60),good:"Revenue is well spread.",bad:"Losing your biggest customer would hurt. Lenders see this as concentration risk."},
+{k:"der",label:"Liens, judgments or defaults",cat:"Public records",min:0,max:5,step:1,def:0,fmt:num,w:6,s:v=>1-clamp(v/2),good:"Clean public record.",bad:"Liens or judgments are a serious warning sign for lenders."}];
+const BANKS=[
+{n:"Northbridge Bank",t:"High-street bank",op:1.6,pr:1.1,rm:1.0,fee:1.0,min:600,max:100000,term:84,dti:43},
+{n:"Crestline Credit Union",t:"Member-owned",op:1.1,pr:.6,rm:.85,fee:0,min:560,max:35000,term:60,dti:40},
+{n:"Meridian Trust",t:"Private bank",op:1.4,pr:1.0,rm:.7,fee:.5,min:700,max:250000,term:84,dti:40},
+{n:"Apex Digital",t:"Online lender",op:.9,pr:1.2,rm:1.15,fee:2.5,min:580,max:50000,term:60,dti:45},
+{n:"Harbor & Co. Finance",t:"Specialist lender",op:1.8,pr:1.6,rm:1.5,fee:3.5,min:500,max:25000,term:48,dti:50}];
+const REF=4.0,LGD=.45;
+let mode="ind",S={};
+const F=()=>mode==="ind"?IND:BUS;
+function reset(){S={};F().forEach(f=>{if(!f.calc)S[f.k]=f.def});
+ if(mode==="ind"){S.inc=3200;S.debt=800}else{S.inc=18000;S.debt=9000}
+ S.amt=mode==="ind"?10000:50000;S.trm=36;
+ const a=document.getElementById("amt");a.max=mode==="ind"?100000:250000;a.value=S.amt;document.getElementById("trm").value=S.trm}
+function build(){
+ const el=document.getElementById("form");let h="",cats={};
+ const money=(id,l,v)=>`<div class="fld"><label for="${id}">${l}<span class="tag">Financial data</span></label><input type="number" id="${id}" min="0" step="50" value="${v}"></div>`;
+ h+=`<div class="grid">${money("inc",mode==="ind"?"Monthly gross income (£)":"Monthly net operating cash flow (£)",S.inc)}${money("debt",mode==="ind"?"Monthly debt payments (£)":"Monthly debt service (£)",S.debt)}</div>`;
+ F().forEach(f=>{if(!f.calc)(cats[f.cat]=cats[f.cat]||[]).push(f)});
+ for(const c in cats){h+=`<div class="grp"><h3>${c}</h3><div class="grid">`;
+  cats[c].forEach(f=>h+=`<div class="fld"><label for="f_${f.k}">${f.label}<output id="o_${f.k}">${f.fmt(S[f.k])}</output></label><input type="range" id="f_${f.k}" data-k="${f.k}" min="${f.min}" max="${f.max}" step="${f.step}" value="${S[f.k]}"></div>`);
+  h+="</div></div>"}
+ el.innerHTML=h;
+ el.querySelectorAll("input[type=range]").forEach(i=>i.oninput=()=>{S[i.dataset.k]=+i.value;document.getElementById("o_"+i.dataset.k).textContent=F().find(f=>f.k===i.dataset.k).fmt(+i.value);run()});
+ ["inc","debt"].forEach(id=>document.getElementById(id).oninput=e=>{S[id]=Math.max(0,+e.target.value||0);run()});
+ const u={};F().forEach(f=>(u[f.cat]=u[f.cat]||[]).push(f.label));
+ u["Financial data"]=u["Financial data"]||[];u["Financial data"].unshift(mode==="ind"?"Monthly income":"Monthly operating cash flow",mode==="ind"?"Monthly debt payments":"Monthly debt service");
+ document.getElementById("used").innerHTML=Object.keys(u).map(c=>`<p style="margin-top:6px"><b style="color:var(--ink)">${c}:</b> ${u[c].join("; ")}.</p>`).join("")+`<p style="margin-top:8px">The loan amount and term you choose in step 4 are also used to test affordability. A real platform would add consented bank-account, bureau and open-banking feeds.</p>`}
+function score(){
+ let tot=0;const rows=F().map(f=>{const v=f.calc?f.calc(S):S[f.k];const s=f.s(v);const pts=s*f.w*5.5,max=f.w*5.5;tot+=pts;return{f,v,s,pts,max}});
+ return{score:Math.round(300+tot),rows}}
+const bandOf=s=>s>=800?["Exceptional","var(--good)"]:s>=740?["Very good","var(--good)"]:s>=670?["Good","var(--good)"]:s>=580?["Fair","var(--mid)"]:s>=500?["Poor","var(--bad)"]:["Very poor","var(--bad)"];
+const pdOf=s=>clamp(.004*Math.exp((750-s)/70),.003,.35);
+function gauge(sc){const [b,c]=bandOf(sc),t=(sc-300)/550,a=Math.PI*(1-t),x=100+80*Math.cos(a),y=100-80*Math.sin(a);
+ return`<svg viewBox="0 0 200 112" width="100%" role="img" aria-label="Score ${sc} of 850"><path d="M20 100A80 80 0 0 1 180 100" fill="none" stroke="var(--line)" stroke-width="14" stroke-linecap="round"/><path d="M20 100A80 80 0 0 1 ${x.toFixed(1)} ${y.toFixed(1)}" fill="none" stroke="${c}" stroke-width="14" stroke-linecap="round"/><text x="14" y="112" font-size="9" fill="var(--mute)">300</text><text x="170" y="112" font-size="9" fill="var(--mute)">850</text></svg><div class="n">${sc}</div><span class="band" style="color:${c}">${b}</span>`}
+function pmt(P,apr,n){const r=apr/1200;return r?P*r/(1-Math.pow(1+r,-n)):P/n}
+function run(){
+ const R=score(),sc=R.score,pd=pdOf(sc),[bn,bc]=bandOf(sc);
+ document.getElementById("gauge").innerHTML=gauge(sc)+`<p class="mute small" style="margin-top:10px">Range 300 to 850. Each factor below adds points up to its maximum.</p>`;
+ const sorted=[...R.rows].sort((a,b)=>(a.s-b.s)*b.f.w-0||a.s-b.s);
+ const weakest=[...R.rows].sort((a,b)=>((1-b.s)*b.f.w)-((1-a.s)*a.f.w)).slice(0,3).map(r=>r.f.k);
+ document.getElementById("why").innerHTML=`<p style="margin-bottom:6px"><b>${bn}.</b> ${weakest.length?"The three factors costing you the most points are marked.":""}</p>`+
+  [...R.rows].sort((a,b)=>b.f.w-a.f.w).map(r=>{const good=r.s>=.7,c=good?"var(--good)":r.s>=.45?"var(--mid)":"var(--bad)",w=weakest.includes(r.f.k)&&r.s<.7;
+  return`<div class="fx"><div class="top"><span>${r.f.label}<span class="tag">${r.f.cat}</span>${w?'<span class="tag" style="color:var(--bad);border-color:var(--bad)">biggest drag</span>':""}</span><span style="font-variant-numeric:tabular-nums">${r.f.fmt(r.v)} · ${Math.round(r.pts)}/${Math.round(r.max)} pts</span></div><div class="bar"><i style="width:${r.s*100}%;background:${c}"></i></div><p class="small mute">${good?r.f.good:r.f.bad}</p></div>`}).join("");
+ // risk
+ const amt=S.amt,n=S.trm;
+ const comp={ref:REF,opex:1.3,loss:pd*100*LGD,prof:1.0};const rate=comp.ref+comp.opex+comp.loss+comp.prof;
+ const approve=sc>=640?"Approve at standard pricing":sc>=560?"Approve with higher pricing or conditions":sc>=500?"Refer to manual review":"Decline";
+ document.getElementById("risk").innerHTML=[["Probability of default (12 mo)",(pd*100).toFixed(1)+"%"],["Loss given default",(LGD*100)+"%"],["Expected loss",(pd*LGD*100).toFixed(2)+"%"],["Risk-based rate",rate.toFixed(2)+"%"],["Decision",approve]].map(([a,b])=>`<div class="stat"><span class="mute small">${a}</span><b style="${a==="Decision"?"font-size:15px":""}">${b}</b></div>`).join("");
+ document.getElementById("build").innerHTML=`<table><tr><th>Rate component</th><th>Meaning</th><th>Percent</th></tr>
+ <tr><td>Reference rate</td><td>Bank’s cost of funds (assumed)</td><td>${comp.ref.toFixed(2)}%</td></tr>
+ <tr><td>Operating cost</td><td>Servicing, underwriting, collections</td><td>${comp.opex.toFixed(2)}%</td></tr>
+ <tr><td>Credit risk premium</td><td>Default probability × loss given default</td><td>${comp.loss.toFixed(2)}%</td></tr>
+ <tr><td>Profit margin</td><td>Return on capital</td><td>${comp.prof.toFixed(2)}%</td></tr>
+ <tr><th>Indicative rate</th><th></th><th>${rate.toFixed(2)}%</th></tr></table>`;
+ document.getElementById("riskNote").textContent="Score is mapped to default probability with a logistic-style curve: about 0.4% at 750 and roughly doubling every 50 points below. Each lender then scales the risk premium by its own appetite. Affordability is tested against income and existing debt.";
+ // offers
+ document.getElementById("amtO").textContent=gbp(amt);document.getElementById("trmO").textContent=n+" months";
+ const offers=BANKS.map(b=>{const r=REF+b.op+pd*100*LGD*b.rm+b.pr,fee=amt*b.fee/100;
+  const p=pmt(amt,r,n),apr=r+ (b.fee? (b.fee/ (n/12))*0.55:0),after=(S.debt+p)/Math.max(S.inc,1)*100;
+  const why=[];if(sc<b.min)why.push(`needs a score of ${b.min}+`);if(amt>b.max)why.push(`max loan ${gbp(b.max)}`);if(n>b.term)why.push(`max term ${b.term} months`);if(after>b.dti)why.push(`payments would reach ${after.toFixed(0)}% of income (limit ${b.dti}%)`);
+  return{b,r,apr,p,fee,cost:p*n+fee,why,ok:!why.length}});
+ const key=document.getElementById("sort").value,k={apr:"apr",pay:"p",cost:"cost"}[key];
+ offers.sort((a,b)=>(b.ok-a.ok)||(a[k]-b[k]));const best=offers.find(o=>o.ok);
+ document.getElementById("offers").innerHTML=offers.map(o=>`<div class="offer ${o===best?"best":""} ${o.ok?"":"no"}"><div><b>${o.b.n}</b>${o===best?'<span class="pill">Best match</span>':""}<br><span class="small mute">${o.b.t}</span></div>
+ <div><span class="small mute">APR</span><div class="v">${o.ok?o.apr.toFixed(2)+"%":"–"}</div></div><div><span class="small mute">Monthly</span><div class="v">${o.ok?gbp(o.p):"–"}</div></div><div><span class="small mute">Fees</span><div class="v">${o.ok?gbp(o.fee):"–"}</div></div><div><span class="small mute">Total cost</span><div class="v">${o.ok?gbp(o.cost):"–"}</div></div>
+ <div>${o.ok?`<button class="btn" onclick="this.textContent='Application started'">Apply</button>`:`<span class="small" style="color:var(--bad)">Not eligible: ${o.why.join("; ")}</span>`}</div></div>`).join("")+(best?"":`<p class="small mute" style="margin-top:10px">No lender matches this request. Try a smaller amount, a shorter term, or improve the factors above.</p>`)}
+function setMode(m){mode=m;bi.setAttribute("aria-pressed",m==="ind");bb.setAttribute("aria-pressed",m==="bus");reset();build();run()}
+bi.onclick=()=>setMode("ind");bb.onclick=()=>setMode("bus");
+amt.oninput=()=>{S.amt=+amt.value;run()};trm.oninput=()=>{S.trm=+trm.value;run()};sort.onchange=run;
+setMode("ind");
+</script></body></html>

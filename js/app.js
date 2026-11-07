@@ -1,4 +1,4 @@
-(function () {
+/*  */(function () {
   "use strict";
   var K = window.KamL, S = K.scoring, R = K.risk, L = K.lenders, T = K.transactions;
   var $ = function (s, el) { return (el || document).querySelector(s); };
@@ -88,6 +88,66 @@
   };
 
   // ------------------------------------------------------------------
+  // Number validation
+  // ------------------------------------------------------------------
+  // Per-field rules (default: decimal, min 0, no max). int = whole numbers only.
+  var LIMITS = {
+    age: { int: true, min: 18, max: 120, minMsg: "You must be 18 or over to apply for credit." },
+    yearsEmployed: { max: 90 }, yearsAtAddress: { max: 100 }, oldestAccountYears: { max: 80 },
+    numAccounts: { int: true, max: 100 }, hardInquiries12m: { int: true, max: 100 },
+    latePayments12m: { int: true, max: 365 }, latePaymentsOlder: { int: true, max: 1000 }, defaults: { int: true, max: 100 },
+    rentOnTimeMonths: { int: true, max: 24 }, overdraftDaysPerMonth: { int: true, max: 31 },
+    yearsInOperation: { max: 500 }, employees: { int: true }, supplierDaysBeyondTerms: { int: true, max: 365 },
+    ownerCreditScore: { int: true, min: 300, max: 850 }, discretionaryExpenseShare: { max: 100 },
+    lf_amount: { min: 100, max: 100000000 }, lf_base: { max: 25 }
+  };
+  function limitFor(key) { return LIMITS[key] || {}; }
+
+  function numInputHTML(id, key, value, extra) {
+    var lim = limitFor(key);
+    return '<input type="text" inputmode="' + (lim.int ? "numeric" : "decimal") + '" autocomplete="off" data-num="' + key + '"' +
+      (lim.int ? " data-int" : "") + ' id="' + id + '"' + (extra || "") + ' value="' + (value === undefined ? "" : esc(value)) +
+      '" aria-describedby="' + id + '_err">';
+  }
+  function errHTML(id) { return '<div class="err" id="' + id + '_err" aria-live="polite"></div>'; }
+
+  function setErr(el, msg) {
+    var box = document.getElementById(el.id + "_err");
+    if (box) box.textContent = msg || "";
+    if (msg) el.setAttribute("aria-invalid", "true"); else el.removeAttribute("aria-invalid");
+  }
+
+  // Strip anything that isn't a digit (or a single decimal point) as the user types or pastes.
+  function sanitizeNumber(el) {
+    var isInt = el.hasAttribute("data-int"), v = el.value;
+    // Whole-number fields drop everything after a decimal point (so a pasted "3.5" becomes 3, not 35).
+    var clean = isInt ? v.split(".")[0].replace(/[^0-9]/g, "") : v.replace(/[^0-9.]/g, "");
+    if (!isInt) {
+      var dot = clean.indexOf(".");
+      if (dot >= 0) clean = clean.slice(0, dot + 1) + clean.slice(dot + 1).replace(/\./g, "");
+    }
+    if (clean !== v) {
+      var pos = Math.max(0, (el.selectionStart || clean.length) - (v.length - clean.length));
+      el.value = clean;
+      try { el.setSelectionRange(pos, pos); } catch (e) {}
+      setErr(el, isInt ? "Whole numbers only (0–9)." : "Numbers only — digits and one decimal point.");
+    } else setErr(el, "");
+  }
+
+  // Full check (range, whole number). Returns an error message or "".
+  function checkNumber(el, required) {
+    var lim = limitFor(el.dataset.num), v = el.value.trim();
+    if (v === "") return required ? "This field is required." : "";
+    if (!/^\d+(\.\d+)?$|^\.\d+$|^\d+\.$/.test(v)) return "Enter a number using digits only.";
+    var n = parseFloat(v);
+    if (lim.int && n % 1 !== 0) return "Enter a whole number.";
+    var min = lim.min === undefined ? 0 : lim.min;
+    if (n < min) return lim.minMsg || "Must be at least " + min.toLocaleString("en-GB") + ".";
+    if (lim.max !== undefined && n > lim.max) return "Must be " + lim.max.toLocaleString("en-GB") + " or less.";
+    return "";
+  }
+
+  // ------------------------------------------------------------------
   // Form rendering
   // ------------------------------------------------------------------
   function fieldHTML(f) {
@@ -106,8 +166,8 @@
       h += '<div class="input"><input type="text" id="' + id + '" data-k="' + f.id + '"></div>';
     } else {
       h += '<div class="input' + (f.unit ? " has-unit" : "") + '">' + (f.unit ? '<span class="unit">' + f.unit + "</span>" : "") +
-        '<input type="number" inputmode="decimal" min="0" step="' + (f.step || "any") + '" id="' + id + '" data-k="' + f.id + '" placeholder="0">' +
-        (f.suffix ? '<span class="suffix">' + f.suffix + "</span>" : "") + "</div>";
+        numInputHTML(id, f.id, "", ' data-k="' + f.id + '" placeholder="0"' + (f.required ? ' aria-required="true"' : "")) +
+        (f.suffix ? '<span class="suffix">' + f.suffix + "</span>" : "") + "</div>" + errHTML(id);
     }
     if (f.help || f.note) h += '<div class="help">' + esc(f.help || f.note) + "</div>";
     return h + "</div>";
@@ -138,6 +198,7 @@
   }
 
   function writeForm(d) {
+    $$("#form [data-num]").forEach(function (el) { setErr(el, ""); });
     allFields(state.type).forEach(function (f) {
       var v = d[f.id];
       if (v === undefined) v = f.def !== undefined ? f.def : "";
@@ -322,9 +383,9 @@
     $("#loanForm").innerHTML =
       '<div class="field" style="flex:2;min-width:220px"><label for="lf_product">What do you want to borrow for?</label><select id="lf_product">' +
       prods.map(function (k) { return '<option value="' + k + '"' + (k === req.productId ? " selected" : "") + ">" + esc(R.PRODUCTS[k].label) + "</option>"; }).join("") + "</select></div>" +
-      '<div class="field"><label for="lf_amount">Amount</label><div class="input has-unit"><span class="unit">£</span><input type="number" id="lf_amount" min="100" step="100" value="' + req.amount + '"></div></div>' +
+      '<div class="field"><label for="lf_amount">Amount</label><div class="input has-unit"><span class="unit">£</span>' + numInputHTML("lf_amount", "lf_amount", req.amount) + "</div>" + errHTML("lf_amount") + "</div>" +
       '<div class="field"><label for="lf_term">Term</label><select id="lf_term">' + terms.map(function (t) { return '<option value="' + t + '"' + (t === req.termMonths ? " selected" : "") + ">" + fmtTerm(t) + "</option>"; }).join("") + "</select></div>" +
-      '<div class="field" style="max-width:150px"><label for="lf_base">Central bank base rate</label><div class="input"><input type="number" id="lf_base" step="0.05" min="0" value="' + state.settings.baseRate + '"><span class="suffix">%</span></div></div>';
+      '<div class="field" style="max-width:150px"><label for="lf_base">Central bank base rate</label><div class="input">' + numInputHTML("lf_base", "lf_base", state.settings.baseRate) + '<span class="suffix">%</span></div>' + errHTML("lf_base") + "</div>";
   }
 
   function recompute() {
@@ -545,6 +606,20 @@
   // Evaluate
   // ------------------------------------------------------------------
   function evaluate() {
+    // Field-level number checks first: flag every bad field inline.
+    var bad = [];
+    $$("#form [data-num]").forEach(function (el) {
+      var f = allFields(state.type).filter(function (x) { return "f_" + x.id === el.id; })[0];
+      var msg = checkNumber(el, !!(f && f.required));
+      setErr(el, msg);
+      if (msg) bad.push(el);
+    });
+    if (bad.length) {
+      $("#formError").innerHTML = '<div class="alert critical">Please fix ' + bad.length + " field" + (bad.length > 1 ? "s" : "") + " with invalid numbers (highlighted above).</div>";
+      bad[0].focus();
+      bad[0].scrollIntoView({ block: "center" });
+      return;
+    }
     var d = readForm(), err = [];
     state.data[state.type] = d;
     if (state.type === "individual") {
@@ -584,6 +659,12 @@
   }
 
   function bind() {
+    // Live filter on every numeric field (form + loan inputs): only digits / one decimal point survive.
+    document.addEventListener("input", function (e) { if (e.target.dataset && e.target.dataset.num) sanitizeNumber(e.target); });
+    document.addEventListener("focusout", function (e) {
+      var el = e.target;
+      if (el.dataset && el.dataset.num && el.closest("#form")) setErr(el, checkNumber(el, false));
+    });
     $("#typeSeg").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b) setType(b.dataset.type); });
     $("#personas").addEventListener("click", function (e) {
       var b = e.target.closest("[data-persona]"); if (!b) return;
@@ -616,8 +697,13 @@
       var req = state.request[state.type];
       if (e.target.id === "lf_product") { req.productId = e.target.value; renderLoanForm(); }
       if (e.target.id === "lf_term") req.termMonths = +e.target.value;
-      if (e.target.id === "lf_amount") req.amount = Math.max(100, +e.target.value || 0);
-      if (e.target.id === "lf_base") state.settings.baseRate = Math.max(0, parseFloat(e.target.value) || 0);
+      if (e.target.dataset.num) {
+        var msg = checkNumber(e.target, true);
+        setErr(e.target, msg);
+        if (msg) return; // keep the last valid figures until the input is fixed
+      }
+      if (e.target.id === "lf_amount") req.amount = parseFloat(e.target.value);
+      if (e.target.id === "lf_base") state.settings.baseRate = parseFloat(e.target.value);
       renderRisk(); renderOffers();
     });
     $("#sortBy").addEventListener("change", function () { state.sort = this.value; renderOffers(); });

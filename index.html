@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KamL Credit</title>
+  <meta name="description" content="Transparent credit scoring for people and businesses, with risk-based pricing and lender offers.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap bar">
+      <div class="brand"><div class="brand-mark">K</div>KamL Credit <small>make credit accessible</small></div>
+      <div class="spacer"></div>
+      <div class="privacy">🔒 Runs entirely in your browser — no data leaves your device</div>
+      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle colour theme">◐</button>
+    </div>
+    <div class="wrap">
+      <nav class="steps" id="steps">
+        <button class="step-btn active" data-step="1"><div class="n">Step 1</div><div class="t">Your data</div></button>
+        <button class="step-btn" data-step="2" disabled><div class="n">Step 2</div><div class="t">Credit score</div></button>
+        <button class="step-btn" data-step="3" disabled><div class="n">Step 3</div><div class="t">Risk &amp; interest rate</div></button>
+        <button class="step-btn" data-step="4" disabled><div class="n">Step 4</div><div class="t">Loan offers</div></button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- STEP 1 -->
+    <section class="panel active" id="panel-1">
+      <div class="section-head">
+        <div>
+          <h2>Tell us about your finances</h2>
+          <p class="muted">Fill in what you know, or upload a bank statement CSV to work out your spending automatically.</p>
+        </div>
+        <div class="seg" id="typeSeg" role="tablist">
+          <button class="on" data-type="individual">Individual</button>
+          <button data-type="business">Business</button>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div>
+          <div class="card">
+            <div class="eyebrow" style="margin-bottom:8px">Try an example profile</div>
+            <div class="chips" id="personas"></div>
+          </div>
+          <div class="card">
+            <form id="form" novalidate></form>
+            <div class="actions">
+              <button class="btn ghost" id="resetBtn" type="button">Clear</button>
+              <button class="btn" id="evalBtn" type="button">Evaluate credit →</button>
+            </div>
+            <div id="formError"></div>
+          </div>
+        </div>
+        <aside class="sticky">
+          <div class="card">
+            <h3>Bank statement (optional)</h3>
+            <p class="small muted" style="margin-top:4px">CSV with <code>date, description, amount</code> (and optionally <code>balance</code>). We categorise every transaction to measure spending habits, income regularity and overdraft use.</p>
+            <label class="upload" id="drop" style="display:block;margin-top:12px;cursor:pointer">
+              <input type="file" id="csvInput" accept=".csv,text/csv">
+              <div><b>Drop a CSV here</b> or click to choose</div>
+              <div class="small muted">Processed locally, never uploaded</div>
+            </label>
+            <div style="margin-top:8px" class="small"><a href="#" id="sampleCsv">Download a sample statement</a> · <a href="#" id="useSampleCsv">Analyse the sample</a></div>
+            <div class="upload-result" id="csvResult"></div>
+          </div>
+          <div class="card">
+            <h3>What data is used</h3>
+            <p class="small muted" style="margin-top:4px">Each factor's share of your score:</p>
+            <ul class="data-list" id="dataUsed"></ul>
+            <div class="eyebrow" style="margin-top:14px">Never used in scoring</div>
+            <div class="never" id="neverUsed"></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- STEP 2 -->
+    <section class="panel" id="panel-2">
+      <div class="card">
+        <div class="score-hero">
+          <div id="gauge"></div>
+          <div>
+            <div class="eyebrow" id="scoreFor">Your credit score</div>
+            <h2 id="scoreHeadline" style="margin-top:4px"></h2>
+            <p class="muted" id="scoreSummary" style="margin-top:6px"></p>
+            <div class="kpis" id="scoreKpis"></div>
+          </div>
+        </div>
+      </div>
+      <div class="grid-even" style="margin-top:16px">
+        <div class="card"><h3>What's helping your score</h3><ul class="reasons pos" id="helping"></ul></div>
+        <div class="card"><h3>What's holding it back</h3><ul class="reasons neg" id="hurting"></ul></div>
+      </div>
+      <div class="card">
+        <div class="section-head" style="margin-bottom:8px">
+          <div><h3>Score breakdown</h3><p class="small muted">Every factor, the data it used, and how to improve it. Click a factor to expand.</p></div>
+          <button class="btn ghost sm" id="expandAll" type="button">Expand all</button>
+        </div>
+        <div id="factors"></div>
+      </div>
+      <div class="card">
+        <h3>Data used for this score</h3>
+        <div class="table-scroll"><table id="dataTable"></table></div>
+      </div>
+      <div class="actions"><button class="btn ghost" data-goto="1">← Edit data</button><button class="btn" data-goto="3">See risk &amp; interest rate →</button></div>
+    </section>
+
+    <!-- STEP 3 -->
+    <section class="panel" id="panel-3">
+      <div class="card">
+        <div class="section-head" style="margin-bottom:10px"><div><h2>Risk assessment</h2><p class="muted">How a bank turns your score into an interest rate.</p></div></div>
+        <div class="toolbar" id="loanForm"></div>
+      </div>
+      <div id="riskOut"></div>
+      <div class="actions"><button class="btn ghost" data-goto="2">← Credit score</button><button class="btn" data-goto="4">Compare lender offers →</button></div>
+    </section>
+
+    <!-- STEP 4 -->
+    <section class="panel" id="panel-4">
+      <div class="section-head">
+        <div><h2>Loan offers</h2><p class="muted" id="offersSub"></p></div>
+        <div class="toolbar">
+          <div class="field"><label for="sortBy">Sort by</label>
+            <select id="sortBy"><option value="apr">Lowest APR</option><option value="monthly">Lowest monthly payment</option><option value="total">Lowest total cost</option><option value="likelihood">Approval chance</option></select>
+          </div>
+        </div>
+      </div>
+      <div class="offers" id="offers"></div>
+      <details class="ineligible card" id="inelig"></details>
+      <p class="notice">Offers are indicative quotes from illustrative, fictional lenders, calculated from your risk profile using a soft search that does not affect your credit file. Final terms depend on each lender's full underwriting.</p>
+      <div class="actions"><button class="btn ghost" data-goto="3">← Risk &amp; rate</button></div>
+    </section>
+  </main>
+
+  <div class="modal-bg" id="modal"><div class="modal" id="modalBody" role="dialog" aria-modal="true"></div></div>
+  <div class="tooltip" id="tooltip"></div>
+
+  <script src="js/scoring.js"></script>
+  <script src="js/risk.js"></script>
+  <script src="js/lenders.js"></script>
+  <script src="js/transactions.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

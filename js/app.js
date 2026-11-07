@@ -548,8 +548,10 @@
     var d = readForm(), err = [];
     state.data[state.type] = d;
     if (state.type === "individual") {
-      if (!(d.monthlyIncome > 0) && d.employmentStatus !== "unemployed") err.push("Enter your monthly income.");
-      if (d.age !== "" && d.age < 18) err.push("You must be 18 or over to apply for credit.");
+      if (!(d.monthlyIncome >= 0) && d.employmentStatus !== "unemployed") err.push("Enter a valid monthly income.");
+      if (d.age === "" || !Number.isFinite(Number(d.age)) || Number(d.age) < 18) {
+        err.push("You must enter a valid age of 18 or over to apply for credit.");
+      }
     } else if (!(d.annualRevenue > 0)) err.push("Enter the business's annual revenue.");
     if (err.length) {
       $("#formError").innerHTML = '<div class="alert critical">' + err.map(esc).join("<br>") + "</div>";

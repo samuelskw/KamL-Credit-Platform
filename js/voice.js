@@ -132,6 +132,7 @@
     if (/^(repeat|say again|say that again|again|pardon|what|sorry|come again|repeat that|repeat please)$/.test(t)) return "repeat";
     if (/^(evaluate|submit|calculate|finish|done|i'm done|im done|get my score|show my score|check my score|evaluate credit)$/.test(t)) return "evaluate";
     if (/^(start over|start again|restart|from the start|from the beginning|begin again)$/.test(t)) return "restart";
+    if (/^(instructions|read the instructions|what can i say|how does this work|how do i use this|voice help)$/.test(t)) return "instructions";
     var m = /^(go to|jump to)\s+(.+)$/.exec(t);
     if (m) return { go: m[2] };
     return changeCommand(text);
@@ -175,22 +176,25 @@
   // can interrupt with the Interrupt button / Alt+S. With headphones (V.duplex)
   // the mic stays on so they can interrupt by voice.
   var RESUME_DELAY = 450; // ms after speech ends, so the tail of our voice isn't captured
-  function say(text, then) {
-    V.lastSaid = text;
+  // opts.keepPrompt: speak without replacing the question shown in the panel (used by notify()).
+  function say(text, then, opts) {
+    opts = opts || {};
+    if (!opts.keepPrompt) { V.lastSaid = text; showPrompt(text); }
     V.saying = "";
     V.turn++; // anything heard from now on belongs to this prompt
-    showPrompt(text);
     var my = ++V.session;
     if (!V.speakOK) { V.speaking = false; ensureListening(); if (then) then(); return; }
     V.speaking = true;
     if (V.duplex) ensureListening(); else stopListening(); // mic off while talking
     synth.cancel();
-    var parts = text.match(/[^.?!]+[.?!]*/g) || [text];
+    // Split into sentences only where . ? ! is followed by a space, so "4.5" or "£1,234.56" stays whole.
+    var parts = text.split(/(?<=[.?!])\s+/).filter(function (p) { return p.trim(); });
+    if (!parts.length) parts = [text];
     V.utts = [];
     V.speaking = true;
     setStatus("speaking");
     parts.forEach(function (p, i) {
-      var u = new SpeechSynthesisUtterance(p.trim());
+      var u = new SpeechSynthesisUtterance(speakable(p.trim()));
       u.lang = "en-GB"; u.rate = V.rate;
       var v = pickVoice(); if (v) u.voice = v;
       u.onstart = function () { if (my === V.session) { V.prevSaying = V.saying; V.saying = p; } };
@@ -215,6 +219,19 @@
     });
   }
 
+  // Say decimals as "point": "4.5" -> "4 point 5", "8.45" -> "8 point 4 5" (digits after the point are read one by one).
+  // Only the spoken words change; the text shown in the panel keeps the normal number.
+  function speakable(s) {
+    return s.replace(/\s*→\s*/g, ", then ").replace(/[←-⇿⌀-⏿■-➿⬀-⯿️]|[\uD83C-\uD83E][\uDC00-\uDFFF]/g, "").replace(/\s+\/\s+/g, " or ")
+      .replace(/(\d)\.(\d+)/g, function (m, whole, frac) { return whole + " point " + frac.split("").join(" "); });
+  }
+
+  // Show a message in the result line AND read it out, so nothing in the panel is visual-only.
+  function notify(text, kind) {
+    showResult(text, kind);
+    if (text && V.speakOK) say(text, null, { keepPrompt: true });
+  }
+
   function stopSpeaking() {
     V.session++;
     V.speaking = false;
@@ -231,6 +248,7 @@
   function ensureListening() {
     if (!V.on || !V.listenOK || V.rec) return;
     if (V.speaking && !V.duplex) return; // never listen to ourselves on speakers
+    if (V.paused || V.waitingMic) return; // paused after repeated failures / permission prompt still open
     V.recWanted = true;
     var rec = new SR(), fatal = false;
     rec.lang = "en-GB"; rec.interimResults = true; rec.maxAlternatives = 3; rec.continuous = true;
@@ -248,13 +266,13 @@
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         fatal = true; V.listenOK = false; V.micReady = false;
         renderButtons();
-        showResult(micHelp("blocked"), "bad");
+        notify(micHelp("blocked"), "bad");
       } else if (e.error === "network") {
         fatal = true;
-        showResult("Speech recognition needs an internet connection in this browser. You can type your answers and use the buttons instead.", "bad");
+        notify("Speech recognition needs an internet connection in this browser. You can type your answers and use the buttons instead.", "bad");
       } else if (e.error === "audio-capture") {
         fatal = true;
-        showResult("No microphone was found.", "bad");
+        notify("No microphone was found. You can type your answers and use the buttons instead.", "bad");
       }
     };
     rec.onend = function () {
@@ -265,7 +283,7 @@
       var now = Date.now();
       V.restarts = (V.restarts || []).filter(function (t) { return now - t < 15000; });
       V.restarts.push(now);
-      if (V.restarts.length > 6) { setStatus("paused"); showResult("Listening paused. Press Speak to continue.", ""); return; }
+      if (V.restarts.length > 6) { V.paused = true; notify("Listening paused. Press Speak, or Alt+S, to continue.", ""); setStatus("paused"); return; }
       setTimeout(ensureListening, 250);
     };
     try { rec.start(); V.rec = rec; setMic(true); if (!V.speaking) setStatus("listening"); }
@@ -302,6 +320,7 @@
   // Speak button / Alt+S: interrupts the assistant and opens the mic straight away.
   function listen() {
     if (V.speaking) stopSpeaking();
+    V.paused = false;
     V.restarts = [];
     ensureListening();
     if (V.rec) setStatus("listening");
@@ -358,7 +377,7 @@
     item = Object.create(item, { label: { value: String(item.label).replace(/[?.!]\s*$/, "") } }); // no "income?."
     switch (item.kind) {
       case "type": q = "Are you applying as an individual, or for a business?"; break;
-      case "select": q = item.label + ". Choose from: " + item.options.map(function (o) { return o[1]; }).join(", ") + "."; break;
+      case "select": q = item.label + ". " + listOptions(item.options.map(function (o) { return o[1]; })) + " Which one would you like?"; break;
       case "checkbox": q = item.label + "? Say yes or no."; break;
       case "checks": q = item.label + ". Say any of: " + item.options.map(function (o) { return o[1]; }).join(", ") + ". Or say none."; break;
       case "text": q = item.label + "?"; break;
@@ -369,7 +388,7 @@
     if (item.kind !== "type") {
       var cur = currentDisplay(item);
       var ans = cur ? " Your answer: " + cur + "." : " No answer yet.";
-      var cut = q.indexOf(". Choose from:") >= 0 ? q.indexOf(". Choose from:") + 1 : q.indexOf(". Say any of:") >= 0 ? q.indexOf(". Say any of:") + 1 : -1;
+      var cut = q.indexOf(". The ") >= 0 && item.kind === "select" ? q.indexOf(". The ") + 1 : q.indexOf(". Say any of:") >= 0 ? q.indexOf(". Say any of:") + 1 : -1;
       q = cut > 0 ? q.slice(0, cut) + ans + q.slice(cut) : q + ans;
     }
     if (item.required) q += " This one is required.";
@@ -412,11 +431,7 @@
     }
     var err = fieldError(item);
     if (err && (prefix || "").indexOf(err) >= 0) err = "";
-    var widget = V.kb ? widgetWord(item) + ": " : ""; // keyboard users hear what kind of control they're on
-    sayThenListen((prefix || "") + intro + (err ? "Error: " + err + " " : "") + widget + question(item) + (opts.suffix || ""));
-  }
-  function widgetWord(item) {
-    return { type: "Choice of two buttons", select: "Drop-down list", checkbox: "Tick box", checks: "Group of tick boxes", text: "Edit box" }[item.kind] || "Edit box";
+    sayThenListen((prefix || "") + intro + "Question " + (V.idx + 1) + " of " + V.queue.length + ". " + (err ? "Error: " + err + " " : "") + question(item) + (opts.suffix || ""));
   }
 
   function itemEl(item) {
@@ -447,7 +462,7 @@
     $("#evalBtn").closest(".card").classList.add("voice-focus");
     if (V.kb) selfFocus($("#evalBtn"));
     setProgress("All questions done");
-    sayThenListen((prefix || "") + "That was the last question. Say evaluate to get your credit score, previous to go back, start over, or cancel.");
+    sayThenListen((prefix || "") + "All questions done. That was the last question. Say evaluate to get your credit score, previous to go back, start over, or cancel.");
   }
 
   function findField(name) {
@@ -556,6 +571,7 @@
 
   function handleForm(alts, cmd) {
     if (cmd === "cancel") return cancel(true);
+    if (cmd === "instructions") return say(instructions());
     // Keyboard focus is on something that isn't a question (a button, link, heading…).
     if (V.phase === "focus") {
       var fe = focused() || V.focusEl;
@@ -602,6 +618,22 @@
   function money(n) { return "£" + Math.round(n).toLocaleString("en-GB"); }
   function pct(x) { return (Math.round(x * 10) / 10) + " percent"; }
 
+  // All factors, biggest possible gain first; ties by lowest score first.
+  function byGain(factors) {
+    return factors.slice().sort(function (a, b) { return (b.upside - a.upside) || (a.score - b.score); });
+  }
+
+  // Every part of the step 3 rate, with why it exists (the "How the rate is built" table).
+  function rateBuiltText() {
+    var rk = A.state.risk;
+    return rk.components.map(function (c) { return c.label + ", " + c.value.toFixed(2) + " percent: " + speakNums(String(c.note).replace(/[.\s]+$/, "")) + "."; }).join(" ") +
+      " Total, " + rk.rate.toFixed(2) + " percent.";
+  }
+  // Step 3 cards by title (Risk grade, Risk-based interest rate, How the rate is built, Bank risk tiers).
+  function riskCard(title) {
+    return $$("#riskOut .card").filter(function (c) { return new RegExp("^" + title, "i").test(textOf($(".eyebrow", c) || $("h3", c))); })[0];
+  }
+
   function stepText(step) {
     var s = A.state, r = s.result;
     if (step === 2) {
@@ -610,8 +642,12 @@
       var t = "Step 2, your credit score. Your score is " + r.score + " out of 850, which is rated " + r.band.label + ". ";
       if (pos.length) t += "Helping your score: " + pos.slice(0, 2).join(" ") + " ";
       if (neg.length) t += "Holding it back: " + neg.slice(0, 2).join(" ") + " ";
-      if (r.hurting[0]) t += "Your best way to improve: " + r.hurting[0].tip + " That could add up to " + r.hurting[0].upside + " points. ";
-      return t + "Say details to hear every factor, next for your interest rate, previous to change your answers, or cancel.";
+      // Score breakdown: the "How to improve" tip shown under EVERY factor, biggest possible gain first.
+      t += "Score breakdown, with how to improve each part, biggest gain first. " + byGain(r.factors).map(function (f) {
+        return f.name + ", rated " + f.rating + ", " + f.points + " of " + f.maxPoints + " points. " + improveText(f);
+      }).join(" ") + " ";
+      if (supportText()) t += "Free, confidential help is available. Say help to hear the services and what they do. ";
+      return t + "Say details to hear every factor, data to hear the data used for this score, next for your interest rate, previous to change your answers, or cancel.";
     }
     if (step === 3) {
       var rk = s.risk, req = s.request[s.type];
@@ -620,7 +656,8 @@
       if (rk.declined) t3 += "That is above what most mainstream lenders accept. ";
       t3 += "For " + rk.product.label.split(" (")[0].toLowerCase() + " of " + money(req.amount) + " over " + A.fmtTerm(req.termMonths).replace("yr", "year") +
         ", the risk-based interest rate is " + rk.rate.toFixed(2) + " percent, about " + money(pay) + " a month. ";
-      return t3 + "You can say amount followed by a number, term followed by years, the loan type such as car or mortgage, next for loan offers, previous, or cancel.";
+      t3 += "How the rate is built: " + rateBuiltText() + " ";
+      return t3 + "Say tiers to hear the bank risk tiers. You can also say amount followed by a number, term followed by years, the loan type such as car or mortgage, next for loan offers, previous, or cancel.";
     }
     if (step === 4) return offersText(0);
     return "";
@@ -652,7 +689,7 @@
     V.phase = $("#modal").classList.contains("on") ? "modal" : "page";
     highlight(null);
     setProgress("Step " + step + " of 4");
-    sayThenListen((prefix || "") + stepText(step));
+    sayThenListen((prefix || "") + stepText(step).replace(/^Step (\d),/, "Step $1 of 4,"));
   }
 
   function handlePage(alts, cmd) {
@@ -692,6 +729,7 @@
 
     if (step === 4 && /^(more|more offers|next offers|the rest|rest)$/.test(c)) return sayThenListen(offersText(V.offerStart + 4));
     if (cmd === "cancel") return cancel(true);
+    if (cmd === "instructions") return say(instructions());
     if (cmd === "repeat") return readStep(step);
     if (cmd === "next") {
       if (step >= 4) return sayThenListen("This is the last step. Say choose and an option number, previous, or cancel.");
@@ -701,18 +739,37 @@
     if (cmd === "restart") return A.go(1);
 
     if (step === 2) {
-      if (/detail|factor|breakdown|everything|more/.test(c)) {
-        var t = A.state.result.factors.map(function (f) { return f.name + ": " + f.rating + ", " + f.points + " of " + f.maxPoints + " points."; }).join(" ");
-        return sayThenListen(t + " Say tips to hear how to improve, next, or cancel.");
+      if (/\b(data|table|my data|data used|what data)\b/.test(c) && $("#dataTable tbody tr")) {
+        var tb = $("#dataTable");
+        if (V.kb) { tb.setAttribute("tabindex", "0"); selfFocus(tb); }
+        return sayThenListen("Data used for this score. " + tableAll(tb) + " End of table. Say next for your interest rate, or cancel.");
       }
-      if (/tip|improve|help|better/.test(c)) {
-        var h = A.state.result.hurting;
-        var tt = h.length ? h.map(function (f) { return f.name + ": " + f.tip; }).join(" ") : "Nothing is seriously holding your score back. Keep doing what you're doing.";
+      if (/\b(help|support|advice|services|debt help)\b/.test(c) && supportText()) {
+        var sb = $("#supportBox .alert");
+        if (V.kb && sb) { if (!sb.hasAttribute("tabindex")) sb.setAttribute("tabindex", "-1"); selfFocus(sb); }
+        return sayThenListen(supportText());
+      }
+      if (/detail|factor|breakdown|everything|more/.test(c)) {
+        var t = A.state.result.factors.map(function (f) { return f.name + ": " + f.rating + ", " + f.points + " of " + f.maxPoints + " points. " + improveText(f); }).join(" ");
+        return sayThenListen("Score breakdown. " + t + " Say next for your interest rate, or cancel.");
+      }
+      if (/tip|improve|better/.test(c)) {
+        var tt = "Ways to improve, biggest gain first. " + byGain(A.state.result.factors).map(function (f) { return f.name + ". " + improveText(f); }).join(" ");
         return sayThenListen(tt + " Say next for your interest rate, or cancel.");
       }
     }
 
     if (step === 3) {
+      // Hear a section of the page again: "tiers", "why", "how is the rate built".
+      var want = /\btiers?\b/.test(c) ? "Bank risk tiers" : /\b(built|breakdown|parts|made up)\b/.test(c) ? "How the rate is built" :
+        /\b(why|grade|risk grade)\b/.test(c) ? "Risk grade" : null;
+      if (want) {
+        var card = riskCard(want), info = sectionInfo(card);
+        if (info) {
+          if (V.kb) { if (!card.hasAttribute("tabindex")) card.setAttribute("tabindex", "-1"); selfFocus(card); }
+          return sayThenListen(info.text + " " + (info.more || "") + " Say next for loan offers, or repeat to hear this step again.");
+        }
+      }
       var n = parseNumber(text);
       if (/amount|borrow|pounds|£/.test(c) && n !== null) return setLoan("lf_amount", n, "Amount set to " + money(n) + ". ");
       if (/base rate|bank rate/.test(c) && n !== null) return setLoan("lf_base", n, "Base rate set to " + n + " percent. ");
@@ -794,6 +851,7 @@
     if (action === "cancel") return cancel(true);
     if (!V.on) return start();
     if (action === "mic") return listen();
+    if (action === "instructions") return say(instructions());
     if (action === "repeat") return V.step === 1 ? (V.phase === "end" ? end() : ask(V.idx)) : readStep(V.step);
     if (V.step === 1) {
       if (action === "next") return next();
@@ -835,13 +893,23 @@
     begin();
   }
 
-  function begin() {
+  // msg: something to say first (e.g. a microphone problem). The panel's instructions are read on the first start.
+  function begin(msg) {
     if (!V.on) return;
-    if (V.step === 1) {
-      V.queue = buildQueue();
-      if (!V.listenOK && SR === undefined) showResult("Speech recognition isn't supported in this browser, so type each answer and press Next. Questions will still be read aloud.", "");
-      ask(V.idx || 0);
-    } else readStep(V.step);
+    var notice = typeof msg === "string" ? msg : "";
+    if (!V.listenOK && SR === undefined) {
+      notice += (notice ? " " : "") + "Speech recognition isn't supported in this browser, so type each answer and press Next. Questions will still be read aloud.";
+    }
+    var pre = notice ? notice + " " : "";
+    if (!V.noteRead) { V.noteRead = true; V.introDone = true; pre += instructions() + " "; }
+    if (V.step === 1) { V.queue = buildQueue(); ask(V.idx || 0, pre); }
+    else readStep(V.step, pre);
+    if (notice) showResult(notice, msg ? "bad" : ""); // after ask(), which clears the result line
+  }
+  // The instructions note at the bottom of the panel, as spoken text.
+  function instructions() {
+    var n = $(".vd-note");
+    return n ? textOf(n).replace(/Alt\+(\w)/g, "Alt $1") : "";
   }
 
   // ==================================================================
@@ -858,7 +926,9 @@
   var PRESS = /^(press|press it|press enter|select|select it|click|click it|choose it|open|open it|activate|enter|ok|okay|go)( please)?$/;
   var NAV_SEL = 'a[href], button:not([disabled]), summary, input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
   var READ_SEL = ".panel.active h2, .panel.active h3, .panel.active .reasons li, .panel.active .kpis > *, .panel.active .notice, #modalBody h2, #modalBody p, " +
-    "#riskOut .alert, #riskOut .card"; // step 3 is read card by card (see sectionInfo)
+    "#riskOut .alert, #riskOut .card, " + // step 3 is read card by card (see sectionInfo)
+    "#supportBox .alert, " +              // step 2 support message (see supportText)
+    ".panel.active #dataTable, .panel.active #dataTable tbody tr"; // step 2 data table: the table, then each row
   var lastKeyAt = 0;
 
   function textOf(el) {
@@ -904,7 +974,7 @@
     var loanName = rk.product.label.split(" (")[0].toLowerCase();
     if (/^Risk grade/i.test(title)) {
       return {
-        text: "Risk grade, section. Tier " + rk.tier.id + ", " + rk.tier.label + " risk. " + rk.tier.desc +
+        text: "Risk grade. Tier " + rk.tier.id + ", " + rk.tier.label + " risk. " + rk.tier.desc +
           " Probability of default in the next 12 months: " + pct(rk.pd * 100) + ". Loss given default for " + loanName + ": " + pct(rk.lgd * 100) +
           ". Expected loss: " + pct(rk.el * 100) + ".",
         ask: "Do you want to see why? Press Enter or say yes.",
@@ -917,7 +987,7 @@
     var parts = rk.components.map(function (c) { return c.label + ", " + c.value.toFixed(2) + " percent"; }).join(". ");
     if (/^Risk-based interest rate/i.test(title)) {
       return {
-        text: "Risk-based interest rate, section. " + rk.rate.toFixed(2) + " percent a year. For " + money(req.amount) + " over " + A.fmtTerm(req.termMonths).replace("yrs", "years").replace("yr", "year") +
+        text: "Risk-based interest rate. " + rk.rate.toFixed(2) + " percent a year. For " + money(req.amount) + " over " + A.fmtTerm(req.termMonths).replace("yrs", "years").replace("yr", "year") +
           ", about " + money(K.risk.payment(req.amount, rk.rate, req.termMonths)) + " a month before lender adjustments. Risk premium: " + rk.riskPremium.toFixed(2) + " percent.",
         ask: "Do you want to see why? Press Enter or say yes.",
         more: "Why: your rate is made up of these parts. " + parts + ". Total, " + rk.rate.toFixed(2) + " percent. The risk premium of " + rk.riskPremium.toFixed(2) +
@@ -926,9 +996,9 @@
     }
     if (/^How the rate is built/i.test(title)) {
       return {
-        text: "How the rate is built, section. Rate equals the base rate, plus funding spread, expected loss, capital charge, operating cost, and margin. Total, " + rk.rate.toFixed(2) + " percent.",
+        text: "How the rate is built. Rate equals the base rate, plus funding spread, expected loss, capital charge, operating cost, and margin. Total, " + rk.rate.toFixed(2) + " percent.",
         ask: "Do you want to see why each part exists? Press Enter or say yes.",
-        more: rk.components.map(function (c) { return c.label + ", " + c.value.toFixed(2) + " percent: " + c.note; }).join(". ") + "."
+        more: rateBuiltText()
       };
     }
     if (/^Bank risk tiers/i.test(title)) {
@@ -937,7 +1007,7 @@
         return "Tier " + speakNums(td[0]) + ": scores " + speakNums(td[1]) + ", default probability " + speakNums(td[2]) + ", rate " + speakNums(td[3]) + ".";
       });
       return {
-        text: "Bank risk tiers, section. Banks group borrowers into tiers A to E. You are in tier " + rk.tier.id + ", " + rk.tier.label + ".",
+        text: "Bank risk tiers. Banks group borrowers into tiers A to E. You are in tier " + rk.tier.id + ", " + rk.tier.label + ".",
         ask: "Do you want to hear every tier? Press Enter or say yes.",
         more: rows.join(" ")
       };
@@ -954,19 +1024,33 @@
     var name = factorName(el);
     var rating = textOf($(".badge", el)), share = textOf($(".small", el)), pts = textOf($(".pts", el)).replace(/(\d+) \/ (\d+) pts/, "$1 of $2 points");
     var open = el.getAttribute("aria-expanded") === "true";
+    var f = factorByName(name);
     return {
-      text: name + ", expandable button, " + (open ? "expanded" : "collapsed") + ". Rated " + rating + ". " + speakNums(share) + ". " + pts + ".",
-      ask: open ? "Press Enter to hide the explanation." : "Press Enter, or say yes, to see more explanation and how to improve."
+      text: name + ". Rated " + rating + ". " + speakNums(share) + ". " + pts + "." + (f ? " " + improveText(f) : ""),
+      ask: open ? "Press Enter to hide the explanation." : "Press Enter, or say yes, to hear why you got this rating."
     };
+  }
+  function factorByName(name) {
+    var r = A.state.result;
+    return r ? r.factors.filter(function (f) { return f.name === name; })[0] : null;
+  }
+  // "How to improve: … This could add up to 4 points." (or "already at the maximum")
+  function improveText(f) {
+    var t = "How to improve: " + speakNums(String(f.tip || "").trim());
+    if (!/[.!?]$/.test(t)) t += ".";
+    if (f.upside > 0) t += " This could add up to " + f.upside + (f.upside === 1 ? " point." : " points.");
+    else if (f.points >= f.maxPoints) t += " You already have full points here.";
+    return t;
   }
   function factorDetails(el) {
     var body = el.nextElementSibling;
     if (!body) return "";
     var good = $$(".reasons.pos li", body).map(textOf), bad = $$(".reasons.neg li", body).map(textOf);
-    var t = factorName(el) + ", expanded. ";
-    if (good.length) t += "Helping: " + good.join(" ") + " ";
-    if (bad.length) t += "Holding it back: " + bad.join(" ") + " ";
-    t += speakNums(textOf($(".tip", body))) + " " + textOf($(".uses", body)) + ".";
+    var t = factorName(el) + ". ";
+    if (good.length) t += "Helping: " + speakNums(good.join(" ")) + " ";
+    if (bad.length) t += "Holding it back: " + speakNums(bad.join(" ")) + " ";
+    var f = factorByName(factorName(el));
+    t += (f ? improveText(f) : speakNums(textOf($(".tip", body)))) + " " + textOf($(".uses", body)) + ".";
     return t.replace(/\.\./g, ".");
   }
 
@@ -990,7 +1074,7 @@
   // Things a "yes" (or Enter) can activate.
   function canActivate(el) {
     if (!el) return false;
-    if (el.matches("button, a[href], summary, [data-toggle], [role=button]")) return true;
+    if (el.matches("button, a[href], summary, [data-toggle], [role=button], #dataTable")) return true;
     var sec = sectionInfo(el);
     return !!(sec && sec.more);
   }
@@ -1032,18 +1116,82 @@
     return textOf(el) || el.title || el.placeholder || "";
   }
 
+  // The words describing a link: its aria-describedby text, or the rest of its list item
+  // (e.g. "National Debtline — free debt advice and tools…" -> "Free debt advice and tools…").
+  function linkDescription(a) {
+    var ids = (a.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    var d = ids.map(function (id) { return textOf(document.getElementById(id)); }).join(" ").trim();
+    if (!d && a.closest("li")) {
+      var li = a.closest("li").cloneNode(true);
+      $$("a", li).forEach(function (x) { x.remove(); });
+      d = textOf(li).replace(/^[\s—–:-]+/, "");
+    }
+    return d ? d.charAt(0).toUpperCase() + d.slice(1) + (/[.!?]$/.test(d) ? "" : ".") : "";
+  }
+
+  // Step 2 support message (shown for Poor / Very poor scores): intro plus every service and what it does.
+  function supportText() {
+    var box = $("#supportBox");
+    if (!box || box.hidden || !$(".alert", box)) return "";
+    var clone = $(".alert", box).cloneNode(true);
+    $$("ul, ol", clone).forEach(function (x) { x.remove(); });
+    var services = $$("#supportBox li a").map(function (a) { return textOf(a) + ": " + linkDescription(a); });
+    return textOf(clone) + " " + services.join(" ") + " Use the down arrow to reach each link, and press Enter to open it in a new tab.";
+  }
+
+  // "The options are: Personal loan, Car finance, … and Mortgage." (spoken-friendly: "3 yrs" -> "3 years")
+  function spokenOption(x) {
+    return x ? speakNums(textOf(x)).replace(/\byrs?\b/g, function (w) { return w === "yr" ? "year" : "years"; }).replace(/\bmths?\b/g, "months") : "nothing";
+  }
+  function optionsText(sel) { return listOptions($$("option", sel).map(spokenOption)); }
+  // "Term: 5 years selected." (a label ending in "?" keeps its question mark: "What do you want to borrow for? Car finance selected.")
+  function selectedLine(sel) {
+    var n = nameOf(sel);
+    return n + (/[?.!:]$/.test(n) ? " " : ": ") + spokenOption(sel.selectedOptions[0]) + " selected.";
+  }
+  function listOptions(o) {
+    if (!o.length) return "";
+    return o.length === 1 ? "The only option is " + o[0] + "." : "The " + o.length + " options are: " + o.slice(0, -1).join(", ") + ", and " + o[o.length - 1] + ".";
+  }
+  // Short form after a change (arrow keys): don't re-read every option each time.
+  function selectedText(sel) { return selectedLine(sel); }
+
+  // ---- Step 2 "Data used for this score" table ----
+  function tableRows(table) { return $$("tbody tr", table); }
+  // Header names as written (textContent): CSS shows them in capitals, which innerText would copy.
+  function tableHeads(table) { return $$("thead th", table).map(function (th) { return th.textContent.replace(/\s+/g, " ").trim(); }); }
+  function rowText(tr) {
+    var table = tr.closest("table"), heads = tableHeads(table), rows = tableRows(table);
+    var cells = $$("td", tr).map(function (td, i) {
+      var v = speakNums(textOf(td).replace(/\s*\/\s*month\b/, " a month"))
+        .replace(/\b(\d+(?:\.\d+)?) ?yrs?\b/g, function (m, n) { return n + (n === "1" ? " year" : " years"); }).replace(/\bmths?\b/g, "months");
+      return (heads[i] ? heads[i] + ": " : "") + v;
+    });
+    return "Row " + (rows.indexOf(tr) + 1) + " of " + rows.length + ". " + cells.join(". ") + ".";
+  }
+  function tableSummary(table) {
+    var card = table.closest(".card"), title = card && $("h3", card) ? textOf($("h3", card)) : "Table";
+    return title + ". " + tableRows(table).length + " rows, each with " + tableHeads(table).join(", ") + ".";
+  }
+  function tableAll(table) {
+    return tableRows(table).map(function (tr) { return rowText(tr).replace(/^Row \d+ of \d+\. /, ""); }).join(" ");
+  }
+
   // What to say when an element gets focus: {text, hint}.
   function describe(el) {
+    if (el.matches("#dataTable")) return { text: tableSummary(el) + " Press the down arrow to read it row by row, or Enter to hear every row.", hint: "" };
+    if (el.matches("#dataTable tbody tr")) return { text: rowText(el), hint: "" };
+    if (el.matches("#supportBox .alert")) return { text: supportText(), hint: "" };
     var sec = sectionInfo(el);
     if (sec) return { text: sec.text + (sec.ask ? " " + sec.ask : ""), hint: "" };
     if (el.matches("[data-toggle]")) { var fi = factorInfo(el); return { text: fi.text + " " + fi.ask, hint: "" }; }
     var name = nameOf(el), tag = el.tagName, type = (el.type || "").toLowerCase(), text, hint = "";
     if (tag === "SELECT") {
-      text = name + ", drop-down list, " + (el.selectedOptions[0] ? textOf(el.selectedOptions[0]) : "nothing") + " selected.";
-      hint = "Say your choice, or use the left and right arrows to change it.";
+      text = selectedLine(el) + " " + optionsText(el) +
+        " Which one would you like? Say it, or use the left and right arrows.";
     } else if (type === "checkbox" || type === "radio") {
       var word = type === "radio" ? "selected" : "ticked";
-      text = name + ", " + (type === "radio" ? "option" : "tick box") + ", " + (el.checked ? word : "not " + word);
+      text = name + ", " + (el.checked ? word : "not " + word);
       hint = "Press Space to " + (type === "radio" ? "select it." : "tick or untick it.");
       if (el.dataset.multi) { // one of a group of tick boxes (step 1)
         var grp = $$('[data-multi="' + el.dataset.multi + '"]');
@@ -1052,31 +1200,33 @@
       }
       text += ".";
     } else if (type === "file") {
-      text = name + ", file upload button.";
+      text = name + ".";
       hint = "Press Enter to choose a CSV file.";
     } else if (tag === "INPUT" || tag === "TEXTAREA") {
       var box = el.closest(".input"), unit = box && $(".unit", box), suf = box && $(".suffix", box);
       var sfx = suf ? " " + ({ yrs: "years", "%": "percent" }[textOf(suf)] || textOf(suf)) : "";
-      text = name + ", edit box, " + (el.value ? (unit ? textOf(unit) : "") + el.value + sfx : "blank") + ".";
+      text = name + ", " + (el.value ? (unit ? textOf(unit) : "") + el.value + sfx : "blank") + ".";
       hint = "Say your answer, or type it and press Enter.";
     } else if (tag === "A") {
-      text = name + ", link."; hint = "Press Enter to open it.";
+      var about = linkDescription(el);
+      text = name + "." + (about ? " " + about : "") + (el.target === "_blank" ? " Opens in a new tab." : "");
+      hint = "Press Enter to open it.";
     } else if (tag === "SUMMARY") {
-      text = name + ", button, " + (el.parentNode.open ? "expanded" : "collapsed") + ".";
+      text = name + ", " + (el.parentNode.open ? "open" : "closed") + ".";
       hint = "Press Enter to open or close it.";
     } else if (tag === "BUTTON" || el.getAttribute("role") === "button") {
       var st = [];
-      if (el.hasAttribute("aria-expanded")) st.push(el.getAttribute("aria-expanded") === "true" ? "expanded" : "collapsed");
+      if (el.hasAttribute("aria-expanded")) st.push(el.getAttribute("aria-expanded") === "true" ? "open" : "closed");
       if ((el.closest(".seg") && el.classList.contains("on")) || el.classList.contains("active")) st.push(el.classList.contains("step-btn") ? "current step" : "selected");
-      text = name + ", " + (el.closest("#typeSeg") ? "toggle button" : el.classList.contains("step-btn") ? "step button" : "button") + (st.length ? ", " + st.join(", ") : "") + ".";
+      text = name + (st.length ? ", " + st.join(", ") : "") + ".";
       var q = buttonQuestion(el);
       if (q) text += " " + q; // always asked: it tells the user what Enter will do
       else hint = el.hasAttribute("aria-expanded") ? "Press Enter to open or close it." : "Press Enter to select it.";
     } else if (/^H[1-6]$/.test(tag)) {
-      text = "Heading level " + tag.charAt(1) + ": " + name + ".";
+      text = name + (/[.!?:]$/.test(name) ? "" : ".");
     } else {
-      var kind = tag === "LI" ? "List item" : el.parentNode && el.parentNode.classList && el.parentNode.classList.contains("kpis") ? "Figure" : "Text";
-      text = kind + ": " + speakNums(name) + (/[.!?:]$/.test(name) ? "" : ".");
+
+      text = speakNums(name) + (/[.!?:]$/.test(name) ? "" : ".");
     }
     var err = el.id && document.getElementById(el.id + "_err");
     if (err && textOf(err)) text += " Error: " + textOf(err);
@@ -1122,6 +1272,12 @@
 
   function onKeyDown(e) {
     if (e.key === "Tab" || /^Arrow/.test(e.key)) V.kb = true;
+    // Step 3 sections are text, not controls: give them a Tab stop while the assistant is on
+    // (done here, before the browser moves focus, because the cards are redrawn when the loan changes).
+    if (e.key === "Tab" && V.on) {
+      $$("#riskOut .card, #riskOut .alert").forEach(function (c) { if (!$("svg", c)) c.setAttribute("tabindex", "0"); });
+      var dt = $("#dataTable"); if (dt) dt.setAttribute("tabindex", "0"); // one Tab stop for the whole table; arrows go row by row
+    }
     lastKeyAt = Date.now();
     if (!V.on || e.altKey || e.ctrlKey || e.metaKey) return;
     var el = e.target, tag = el.tagName || "", type = (el.type || "").toLowerCase();
@@ -1155,7 +1311,7 @@
       return moveFocus(e.key === "ArrowDown" ? 1 : -1);
     }
     if (e.key === "Enter") return onEnter(e, el, tag, type);
-    if (e.key === " " && el.getAttribute && el.getAttribute("tabindex") === "-1") { e.preventDefault(); activate(el); }
+    if (e.key === " " && el.getAttribute && (el.getAttribute("tabindex") === "-1" || sectionInfo(el) || el.matches("#dataTable"))) { e.preventDefault(); activate(el); }
   }
 
   function onEnter(e, el, tag, type) {
@@ -1164,11 +1320,11 @@
     if (type === "checkbox" || type === "radio") { e.preventDefault(); el.click(); say(describe(el).text); return; }
     if (tag === "SELECT") {
       e.preventDefault();
-      try { el.showPicker(); } catch (x) { say(describe(el).text + " Say your choice, or use the left and right arrows."); }
+      try { el.showPicker(); } catch (x) { say(describe(el).text); }
       return;
     }
     if (tag === "INPUT") { e.preventDefault(); return commitTyped(el); }
-    if (el.getAttribute("tabindex") === "-1") { e.preventDefault(); activate(el); } // a step 3 section: hear "why"
+    if (el.getAttribute("tabindex") === "-1" || sectionInfo(el) || el.matches("#dataTable")) { e.preventDefault(); activate(el); } // step 3 section: "why"; data table: every row
   }
 
   // Enter in an edit box: check the typed answer, then move on like a spoken one.
@@ -1185,7 +1341,7 @@
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
       var shown = el.value ? (item.kind === "number" ? fmtValue(item, parseFloat(el.value)) : el.value) : "";
-      var got = shown ? "Got it, " + shown + ". " : "";
+      var got = shown ? "Got it, " + item.label.replace(/[?.!]\s*$/, "") + ": " + shown + ". " : "";
       V.idx = idx; V.phase = "ask";
       if (idx + 1 >= V.queue.length) end(got); else ask(idx + 1, got);
       if (shown) showResult("✓ " + item.label + ": " + shown, "good");
@@ -1213,8 +1369,9 @@
     var tag = el.tagName, type = (el.type || "").toLowerCase();
     var sec = sectionInfo(el);
     if (sec) return say(sec.more ? sec.more + " Press the down arrow to move on." : sec.text);
+    if (el.matches("#dataTable")) return say(tableAll(el) + " End of table.");
     if (el.getAttribute("tabindex") === "-1" && !el.matches(NAV_SEL)) return say(describe(el).text); // plain text: read it again
-    if (tag === "SELECT") { try { el.showPicker(); } catch (x) {} return say(describe(el).text + " Say the option you want."); }
+    if (tag === "SELECT") { try { el.showPicker(); } catch (x) {} return say(describe(el).text); }
     if (tag === "INPUT" && type !== "checkbox" && type !== "radio" && type !== "file") return say(describe(el).text + " Say your answer.");
     el.click();
     if (type === "checkbox" || type === "radio") say(describe(el).text);
@@ -1235,7 +1392,7 @@
       el.value = o[0];
       el.dispatchEvent(new Event("change", { bubbles: true }));
       if (el.id === "sortBy") sayThenListen("Sorted by " + o[1] + ". " + offersText(0));
-      else say(describe(el).text);
+      else say(selectedText(el));
       return true;
     }
     if (el.tagName === "INPUT" && el.dataset.num && el.closest("#loanForm")) {
@@ -1257,15 +1414,18 @@
     if (el.closest("#loanForm")) { // app.js has already re-priced (and maybe re-drawn the form)
       var again = document.getElementById(el.id) || el;
       if (again !== document.activeElement && document.activeElement === document.body) selfFocus(again);
-      return say(describe(again).text + " " + rateLine());
+      return say((again.tagName === "SELECT" ? selectedText(again) : describe(again).text) + " " + rateLine());
     }
     if (el.id === "sortBy") return say("Sorted by " + textOf(el.selectedOptions[0]) + ". " + offersText(0));
-    say(describe(el).text);
+    say(el.tagName === "SELECT" ? selectedText(el) : describe(el).text);
   }
 
   // Button presses from the keyboard (or voice): read what happened.
   function onClick(e) {
     if (!V.on) return;
+    // Clicking a step 3 section with the mouse reads it, including the "why".
+    var card = e.target.closest && !e.target.closest("button, a, input, select") && e.target.closest("#riskOut .card, #riskOut .alert");
+    if (card && !$("svg", card)) { var info = sectionInfo(card); if (info) return say(info.text + (info.more ? " " + info.more : "")); }
     var t = e.target.closest && e.target.closest("[data-choose], [data-confirm], [data-close], button, a, summary, [data-toggle]");
     if (!t || t.closest("#voiceDock") || t.closest("#a11ySurvey")) return;
     if (t.matches("[data-choose]")) {
@@ -1279,13 +1439,14 @@
       return afterModal("You've selected " + name + ". This is an indicative quote. The lender will run its own checks before making a final offer. ");
     }
     if (t.matches("[data-close]")) return afterModal("");
-    if (e.detail !== 0) return; // mouse click: the user can see what happened
+    // Mouse clicks are only announced for score breakdown rows (they reveal how to improve).
+    if (e.detail !== 0 && !t.matches("[data-toggle]")) return;
     var s = V.session;
     setTimeout(function () { // only if nothing else (like a step change) has spoken
       if (!V.on || V.session !== s) return;
       if (t.id === "evalBtn" && A.state.step === 1) return say((textOf($("#formError")) || "Some answers need fixing.") + " Use the arrow keys to find the question.");
       if (t.matches("[data-toggle]")) { // step 2 factor: read the explanation when it opens
-        return say(t.getAttribute("aria-expanded") === "true" ? factorDetails(t) + " Press Enter to hide it, or the down arrow to move on." : factorInfo(t).text.replace(/\. Rated.*/, ".") + " Explanation hidden.");
+        return say(t.getAttribute("aria-expanded") === "true" ? factorDetails(t) + " Press Enter to hide it, or the down arrow to move on." : factorName(t) + ". Explanation hidden.");
       }
       say(t.hasAttribute("aria-expanded") || t.tagName === "SUMMARY" || t.closest(".seg") ? describe(t).text : "Pressed " + nameOf(t) + ".");
     }, 60);
@@ -1335,21 +1496,27 @@
     cb();
   }
 
+  // cb(message): message (if any) is shown and spoken before the first question, so it isn't cut off.
   function ensureMic(cb) {
     function request() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return micGranted(cb); // let SpeechRecognition prompt itself
       setStatus("Waiting for microphone…");
-      showResult((remembered() ? micHelp("forgot") + " " : "") + micHelp("ask"), "");
-      showPrompt("Please allow microphone access so I can hear your answers.");
+      var help = (remembered() ? micHelp("forgot") + " " : "") + micHelp("ask");
+      showResult(help, "");
+      V.waitingMic = true; // don't start the recogniser while the browser's permission prompt is open
+      say("Please allow microphone access so I can hear your answers. " + help);
       navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
         stream.getTracks().forEach(function (t) { t.stop(); }); // we only needed the permission, not the stream
+        V.waitingMic = false;
         micGranted(cb);
       }).catch(function (err) {
+        V.waitingMic = false;
         V.listenOK = false;
         renderButtons();
         var blocked = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
-        showResult(blocked ? micHelp("blocked") : "No microphone was found. You can type answers and use the buttons.", "bad");
-        cb(); // carry on with read-aloud + typing
+        var msg = blocked ? micHelp("blocked") : "No microphone was found. You can type answers and use the buttons.";
+        showResult(msg, "bad");
+        cb(msg); // carry on with read-aloud + typing
       });
     }
     if (!navigator.permissions || !navigator.permissions.query) return request();
@@ -1360,7 +1527,7 @@
         V.listenOK = false;
         renderButtons();
         showResult(micHelp("blocked"), "bad");
-        return cb();
+        return cb(micHelp("blocked"));
       }
       request();
     }).catch(request); // some browsers don't support querying "microphone"
@@ -1376,11 +1543,11 @@
         V.micReady = true; remember();
         V.listenOK = !!SR && (((K.accessibility && K.accessibility.get()) || {}).needs || []).some(function (n) { return n === "tts" || n === "stt"; });
         renderButtons();
-        showResult("Microphone allowed. Press Speak to answer.", "good");
+        notify("Microphone allowed. Press Speak to answer.", "good");
       } else if (status.state === "denied") {
         V.micReady = false; V.listenOK = false;
         stopListening(); renderButtons();
-        showResult(micHelp("blocked"), "bad");
+        notify(micHelp("blocked"), "bad");
       } else {
         V.micReady = false; // reset to "ask" — request again next time we start
       }
@@ -1397,10 +1564,11 @@
     renderButtons();
     setStatus("off");
     setProgress("");
-    showPrompt("Voice assistant stopped. Press Start to continue where you left off.");
+    var bye = "Voice assistant stopped. Press Start to continue where you left off.";
+    showPrompt(bye);
     if (spoken && V.speakOK) {
-      var u = new SpeechSynthesisUtterance("Voice assistant stopped.");
-      u.rate = V.rate; synth.speak(u);
+      var u = new SpeechSynthesisUtterance(bye);
+      u.lang = "en-GB"; u.rate = V.rate; synth.speak(u);
     }
   }
 
@@ -1429,7 +1597,7 @@
       '<div class="vd-ctrl2"><button type="button" class="btn sm" data-v="start" id="vdStart">Start voice assistant</button>' +
       '<button type="button" class="btn ghost sm" data-v="cancel" id="vdCancel">Cancel</button></div>' +
       '<label class="vd-hp"><input type="checkbox" id="vdHp"> 🎧 I am using headphones — let me interrupt by voice</label>' +
-      '<p class="vd-note">The mic turns on when I finish speaking, so I never mistake my own voice for yours. Then say <b>next</b>, <b>previous</b>, <b>repeat</b> or <b>cancel</b>. To interrupt me, press Speak or Alt+S. Move with Tab or the up and down arrows and I will read each item; press Enter or Space to select. Keys: Alt+N next, Alt+P previous, Alt+R repeat, Alt+C cancel. Speech recognition is provided by your browser; Chrome and Edge send audio to their online speech service.</p>';
+      '<p class="vd-note">The mic turns on when I finish speaking, so I never mistake my own voice for yours. Then say <b>next</b>, <b>previous</b>, <b>repeat</b> or <b>cancel</b>. To interrupt me, press Speak or Alt+S. Move with Tab or the up and down arrows and I will read each item; press Enter or Space to select. Keys: Alt+N next, Alt+P previous, Alt+R repeat, Alt+C cancel, Alt+H to hear these instructions again (or say instructions). Speech recognition is provided by your browser; Chrome and Edge send audio to their online speech service.</p>';
     document.body.appendChild(dock);
 
     mini = document.createElement("button");
@@ -1447,7 +1615,7 @@
     // Keyboard shortcuts — work at any time, including while the assistant is speaking.
     document.addEventListener("keydown", function (e) {
       if (!V.on || !e.altKey || e.ctrlKey || e.metaKey) return;
-      var map = { n: "next", p: "prev", r: "repeat", c: "cancel", s: "mic" };
+      var map = { n: "next", p: "prev", r: "repeat", c: "cancel", s: "mic", h: "instructions" };
       var a = map[(e.key || "").toLowerCase()];
       if (!a) return;
       e.preventDefault();
@@ -1508,7 +1676,10 @@
     if (!enabled) { if (V.on) cancel(false); dock.hidden = true; mini.hidden = true; document.body.classList.remove("has-voice"); return; }
     showDock();
     renderButtons();
-    if (!SR && wantListen) showResult("Speech recognition isn't available in this browser (try Chrome or Edge). " + (V.speakOK ? "Questions will be read aloud; type answers and press Next." : ""), "");
+    if (!SR && wantListen) {
+      var nsr = "Speech recognition isn't available in this browser (try Chrome or Edge). " + (V.speakOK ? "Questions will be read aloud; type answers and press Next." : "");
+      if (fromSurvey) showResult(nsr, ""); else notify(nsr, ""); // from the survey, start() reads it before the first question
+    }
     // The survey's Save click counts as a user gesture, so speech can start right away.
     if (fromSurvey) start();
   }

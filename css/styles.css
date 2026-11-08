@@ -601,3 +601,5 @@ body.has-voice [tabindex="-1"]:focus { outline: 3px solid var(--accent); outline
 @media (max-width: 899px) {
   .attention-video { width: 132px; }
 }
+body.has-voice #riskOut .card:focus, body.has-voice #riskOut .alert:focus { outline: 3px solid var(--accent); outline-offset: 3px; }
+body.has-voice #dataTable:focus, body.has-voice #dataTable tr:focus { outline: 3px solid var(--accent); outline-offset: 2px; }

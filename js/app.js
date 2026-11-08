@@ -170,7 +170,8 @@
       K.display.set({
         scale: display.scale === undefined ? 1 : display.scale,
         cvd: display.cvd === undefined ? "none" : display.cvd,
-        dyslexia: display.dyslexia === true
+        dyslexia: display.dyslexia === true,
+        attention: display.attention === true
       });
     }
     var theme = isRecord(saved) ? saved.theme : null;
@@ -242,7 +243,7 @@
       evaluated: state.maxStep >= 4 && !!state.result,
       step: state.step || 1,
       preferences: {
-        display: K.display ? K.display.get() : { scale: 1, cvd: "none", dyslexia: false },
+        display: K.display ? K.display.get() : { scale: 1, cvd: "none", dyslexia: false, attention: false },
         theme: document.documentElement.dataset.theme || "system"
       }
     };

@@ -12,14 +12,25 @@
 <body>
   <header class="top">
     <div class="wrap bar">
-      <div class="brand"><div class="brand-mark">K</div>KamL Credit <small>make credit accessible</small></div>
-      <div class="spacer"></div>
-      <div class="privacy">🔒 Your account profile is stored in Firebase</div>
-      <span id="authUserEmail" class="small muted" style="display:none;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-      <span id="saveStatus" class="small muted" role="status" style="display:none;white-space:nowrap"></span>
-      <button class="btn ghost sm" id="logoutBtn" type="button" style="display:none">Log out</button>
-      <button class="btn ghost sm" id="a11yBtn" type="button" aria-label="Accessibility preferences">♿ Accessibility</button>
-      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle colour theme">◐</button>
+      <div class="header-identity">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">K</div>
+          <div class="brand-copy"><span>KamL Credit</span><small>make credit accessible</small></div>
+        </div>
+        <div class="privacy">🔒 Your account profile is stored in Firebase</div>
+      </div>
+      <div class="header-right">
+        <div class="header-session">
+          <span id="authUserEmail" class="header-account small muted" style="display:none"></span>
+          <span id="saveStatus" class="header-save small muted" role="status" style="display:none"></span>
+        </div>
+        <div class="header-actions">
+          <button class="btn ghost sm" id="logoutBtn" type="button" style="display:none">Log out</button>
+          <button class="btn ghost sm" id="a11yBtn" type="button" aria-label="Accessibility preferences">♿ Accessibility</button>
+          <!-- display.js inserts the Display button immediately before the theme button. -->
+          <button class="btn ghost sm" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle colour theme">◐ Theme</button>
+        </div>
+      </div>
     </div>
     <div class="wrap">
       <nav class="steps" id="steps" style="display:none">
@@ -59,7 +70,6 @@
         </p>
       </form>
       <button class="btn ghost" type="button" id="guestBtn" style="display:none;width:100%;margin-top:14px;">Continue as Guest</button>
-      <p class="small muted" style="margin-top:8px;text-align:center;">Guest progress stays on this browser only. It is not uploaded to Firebase or shared between devices.</p>
       <button class="btn ghost sm" type="button" id="authRetry" style="display:none;margin-top:16px;">Retry loading profile</button>
       <p class="small muted" style="margin-top:18px;">Demo platform — use fictional financial information for testing.</p>
     </div>

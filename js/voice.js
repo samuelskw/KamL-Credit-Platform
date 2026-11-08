@@ -38,26 +38,35 @@
   var SCALES = { thousand: 1e3, grand: 1e3, k: 1e3, million: 1e6, mil: 1e6, billion: 1e9 };
 
   // "£2,500.50" -> 2500.5, "two thousand five hundred" -> 2500, "one and a half" -> 1.5, "5k" -> 5000
+  // Returns null (so the assistant asks again) for anything it can't read safely,
+  // including negative numbers, which no form field accepts.
   function parseNumber(text) {
     var t = String(text).toLowerCase()
       .replace(/(\d),(?=\d{3}\b)/g, "$1")   // thousands separators
+      .replace(/\b(\d{1,3})((?:\.\d{3})+)\b(?!\.\d)/g, function (m, a, b) { return a + b.replace(/\./g, ""); }) // "2.500" = 2500 (recognisers don't add trailing zeros to decimals)
       .replace(/[£$€]/g, " ")
-      .replace(/(\d)\s*(k|m)\b/g, "$1 $2")
-      .replace(/-/g, " ");
+      .replace(/(\d)\s*(k|m)\b/g, "$1 $2");
+    if (/(^|\s)(minus|negative)\b|(^|\s)-\s*\d/.test(t)) return null;
+    t = t.replace(/-/g, " ");
     if (/^\s*(no|none|nothing|zero|nil|nought)\s*\.?$/.test(t)) return 0;
     var toks = t.split(/[^a-z0-9.]+/).filter(Boolean);
-    var total = 0, cur = 0, seen = false, dec = null;
+    var total = 0, cur = 0, seen = false, dec = null, pairable = false;
     for (var i = 0; i < toks.length; i++) {
       var w = toks[i].replace(/\.$/, "") || toks[i];
       if (/^\d*\.?\d+$/.test(w)) {
         if (dec !== null) { dec += w.replace(".", ""); continue; }
-        cur += parseFloat(w); seen = true; continue;
+        cur += parseFloat(w); seen = true; pairable = false; continue;
       }
       if (Object.prototype.hasOwnProperty.call(UNITS, w)) {
-        if (dec !== null && UNITS[w] < 10) { dec += String(UNITS[w]); continue; }
-        cur += UNITS[w]; seen = true; continue;
+        var u = UNITS[w];
+        if (dec !== null && u < 10) { dec += String(u); continue; }
+        // Spoken in pairs, like years: "twenty twenty" = 2020, "nineteen ninety nine" = 1999.
+        if (u >= 10 && pairable && cur >= 10 && cur < 100) { cur = cur * 100 + u; pairable = false; seen = true; continue; }
+        pairable = u >= 10 && cur === 0;
+        cur += u; seen = true; continue;
       }
       if (Object.prototype.hasOwnProperty.call(ORDINALS, w)) { cur += ORDINALS[w]; seen = true; break; } // "the second one" = 2
+      pairable = false;
       if (w === "hundred") { cur = (cur || 1) * 100; seen = true; continue; }
       if (Object.prototype.hasOwnProperty.call(SCALES, w) || (w === "m" && seen)) {
         if (dec !== null) { cur += parseFloat("0." + (dec || "0")); dec = null; }
@@ -65,6 +74,8 @@
       }
       if (w === "point" && seen) { dec = ""; continue; }
       if (w === "half") { cur += 0.5; seen = true; continue; }
+      if (w === "quarters" && seen) { cur *= 0.25; continue; }       // "three quarters" = 0.75
+      if (w === "quarter") { cur += 0.25; seen = true; continue; }    // "a quarter", "two and a quarter"
       if (w === "a" || w === "and") continue;
       if (seen) break; // first non-number word after a number ends it ("3 years", "2500 pounds")
     }

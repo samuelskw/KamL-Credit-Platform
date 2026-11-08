@@ -119,5 +119,5 @@ const KamLAuth = {
 };
 
 window.KamLAuth = KamLAuth;
-// The old UI uses a normal IIFE. Import it only after KamLAuth is available.
-await import("./app.js");
+// app.js is loaded by index.html after this module, so the app (and guest
+// mode) still starts if Firebase cannot be downloaded.

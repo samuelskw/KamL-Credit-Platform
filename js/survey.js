@@ -15,9 +15,6 @@
   var NEEDS = [
     { id: "tts", icon: "🔊", label: "Text to speech", desc: "Read pages, scores and explanations aloud" },
     { id: "stt", icon: "🎙️", label: "Speech to text", desc: "Fill in forms by speaking instead of typing" },
-    { id: "focus", icon: "🎯", label: "Focus mode", desc: "Fewer details on screen and plain-English explanations of your finances" },
-    { id: "contrast", icon: "◑", label: "High contrast", desc: "Stronger colours and borders" },
-    { id: "motion", icon: "⏸️", label: "Reduced motion", desc: "No animations or transitions" },
     { id: "attention", icon: "⚡", label: "Short attention span", desc: "Play a short looping video at the side of the page" },
     { id: "dyslexia", icon: "📖", label: "Dyslexia-friendly font", desc: "OpenDyslexic typeface with wider letter spacing" }
   ];

@@ -126,7 +126,11 @@
     // 2. Credit utilisation --------------------------------------------
     (function () {
       var pos = [], neg = [], s, util = null;
-      if (limit <= 0) {
+      if (limit <= 0 && balance > 0) {
+        // Owing money with no limit recorded: treat as fully used rather than "no data".
+        s = 10;
+        neg.push("You owe " + money(balance) + " on cards/overdrafts but no credit limit was entered — this is treated as fully used. Check your limit figure.");
+      } else if (limit <= 0) {
         s = 55;
         neg.push("No revolving credit limit to measure utilisation against.");
       } else {
@@ -140,7 +144,9 @@
         id: "utilisation", name: "Credit utilisation", weight: 0.18, score: clamp(s, 0, 100), metric: util,
         data: ["Total credit card / overdraft limits", "Current balances"],
         positives: pos, negatives: neg,
-        tip: util === null
+        tip: util === null && balance > 0
+          ? "Enter your total card and overdraft limits so utilisation can be measured, and pay balances down where you can."
+          : util === null
           ? "A low-limit credit card used lightly and cleared monthly builds this factor."
           : util > 30
           ? "Pay balances down to under 30% of limits (" + money(limit * 0.3) + "); under 10% scores best."
@@ -356,7 +362,8 @@
       var growth = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
       var s = curve(growth, [[-30, 5], [-10, 35], [0, 60], [10, 85], [25, 100]]) * 0.6 +
         curve(revenue, [[0, 0], [50000, 30], [250000, 60], [1000000, 85], [5000000, 100]]) * 0.4;
-      (growth >= 0 ? pos : neg).push("Revenue " + (growth >= 0 ? "grew " : "fell ") + pct(Math.abs(growth)) + " year on year to " + money(revenue) + ".");
+      if (prevRevenue > 0) (growth >= 0 ? pos : neg).push("Revenue " + (growth >= 0 ? "grew " : "fell ") + pct(Math.abs(growth)) + " year on year to " + money(revenue) + ".");
+      else neg.push("No prior-year revenue given, so growth is scored as flat (revenue " + money(revenue) + ").");
       F.push({
         id: "growth", name: "Revenue scale & growth", weight: 0.12, score: clamp(s, 0, 100),
         data: ["This year's revenue", "Last year's revenue"],
@@ -380,10 +387,13 @@
 
     (function () {
       var pos = [], neg = [];
-      var months = opex > 0 ? cash / (opex / 12) : 0;
+      // No operating costs entered: any cash is an unlimited buffer, so cap at the top of the curve.
+      var months = opex > 0 ? cash / (opex / 12) : cash > 0 ? 12 : 0;
       var s = curve(months, [[0, 0], [1, 35], [3, 75], [6, 95], [12, 100]]);
       if (overdraftDays > 0) { s -= curve(overdraftDays, [[0, 0], [10, 15], [30, 30]]); neg.push("Business account overdrawn ~" + overdraftDays + " days/month."); }
-      (months >= 3 ? pos : neg).push("Cash reserves cover " + months.toFixed(1) + " months of operating costs.");
+      if (opex > 0) (months >= 3 ? pos : neg).push("Cash reserves cover " + months.toFixed(1) + " months of operating costs.");
+      else if (cash > 0) pos.push("Cash reserves of " + money(cash) + " (no operating costs entered to compare against).");
+      else neg.push("No cash reserves recorded.");
       F.push({
         id: "liquidity", name: "Liquidity & cash flow", weight: 0.08, score: clamp(s, 0, 100),
         data: ["Cash reserves", "Operating expenses", "Overdraft days"],
@@ -414,7 +424,7 @@
       var s = curve(discretionaryShare, [[0, 100], [10, 85], [20, 60], [35, 30], [50, 10]]);
       if (discretionaryShare > 15) neg.push(pct(discretionaryShare) + " of expenses are non-essential (entertainment, travel, subscriptions).");
       else pos.push("Spending is focused on core operations (" + pct(discretionaryShare) + " non-essential).");
-      if (prevRevenue > 0 && opexRatio > 0.95) { s -= 15; neg.push("Costs consume " + pct(opexRatio * 100) + " of revenue."); }
+      if (revenue > 0 && opexRatio > 0.95) { s -= 15; neg.push("Costs consume " + pct(opexRatio * 100) + " of revenue."); }
       F.push({
         id: "spending", name: "Spending discipline", weight: 0.06, score: clamp(s, 0, 100),
         data: ["Expense categories", "Business bank transactions (if uploaded)"],

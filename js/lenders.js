@@ -116,10 +116,16 @@
         var existing = S.num(profile.monthlyDebtPayments);
         // A consolidation loan replaces the debts it pays off, so it isn't added on top.
         var outgoing = request.productId === "consolidation" ? Math.max(existing, monthly) : existing + monthly;
-        dsr = income > 0 ? (outgoing / income) * 100 : 999;
         var limit = request.productId === "mortgage" ? 45 : 40;
-        affordable = dsr <= limit;
-        if (dsr > 60) reasons.push("Repayments would take " + S.pct(dsr) + " of income");
+        if (income > 0) {
+          dsr = (outgoing / income) * 100;
+          affordable = dsr <= limit;
+          if (dsr > 60) reasons.push("Repayments would take " + S.pct(dsr) + " of income");
+        } else {
+          dsr = null; // no income: a percentage would be meaningless
+          affordable = false;
+          reasons.push("No income to make repayments from");
+        }
       } else {
         var noi = S.num(profile.annualRevenue) - S.num(profile.annualOperatingExpenses);
         var service = S.num(profile.annualDebtService) + monthly * 12;

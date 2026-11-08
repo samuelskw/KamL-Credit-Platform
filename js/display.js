@@ -10,6 +10,9 @@
  *                   jsDelivr only when turned on) with extra letter, word
  *                   and line spacing. Ticking "Dyslexia-friendly font" in the
  *                   accessibility survey turns it on too.
+ *   - Short attention span: plays a looping, muted YouTube Short in a panel
+ *                   fixed to the left of the page. Turned on from the
+ *                   accessibility survey; the panel's × turns it off.
  *   - Colour vision: swaps the status colours (good / warning / serious /
  *                   critical) and chart series colours for palettes that stay
  *                   distinguishable with protanopia, deuteranopia, tritanopia
@@ -21,7 +24,7 @@
  * app.js saves get() to the user's Firestore profile (preferences.display)
  * whenever "kaml:display" fires, and calls set() with it after login.
  *
- * API: KamL.display.get(), .set({ scale, cvd, dyslexia }), .open(), .close()
+ * API: KamL.display.get(), .set({ scale, cvd, dyslexia, attention }), .open(), .close()
  * Event: "kaml:display" on window with the new preferences as detail.
  */
 (function () {
@@ -44,7 +47,8 @@
     { id: "tritan", label: "Tritanopia", desc: "Blue-yellow: blues and greens look alike" },
     { id: "mono", label: "Monochrome", desc: "No colour: uses shades of grey only" }
   ];
-  var DEFAULTS = { scale: 1, cvd: "none", dyslexia: false };
+  var DEFAULTS = { scale: 1, cvd: "none", dyslexia: false, attention: false };
+  var ATTENTION_VIDEO = "QtXhFMgERhY"; // youtube.com/shorts/QtXhFMgERhY
 
   // ------------------------------------------------------------------
   // Storage
@@ -52,7 +56,7 @@
   function load() {
     try {
       var v = JSON.parse(localStorage.getItem(KEY) || "null");
-      if (v && typeof v === "object") return { scale: validScale(v.scale), cvd: validCvd(v.cvd), dyslexia: v.dyslexia === true };
+      if (v && typeof v === "object") return { scale: validScale(v.scale), cvd: validCvd(v.cvd), dyslexia: v.dyslexia === true, attention: v.attention === true };
     } catch (e) { /* storage blocked or corrupt */ }
     return null;
   }
@@ -128,18 +132,48 @@
     else root.removeAttribute("data-dyslexia");
   }
 
+  // ------------------------------------------------------------------
+  // Short attention span: side video (styles under [data-attention])
+  // ------------------------------------------------------------------
+  // Browsers only allow autoplay when muted; the YouTube controls can unmute.
+  // loop=1 needs playlist=<same id> to work on a single video.
+  function applyAttention(on) {
+    var box = document.getElementById("attentionVideo");
+    if (!on) {
+      if (box) box.remove();
+      root.removeAttribute("data-attention");
+      return;
+    }
+    root.setAttribute("data-attention", "");
+    if (box) return; // already playing: don't restart it
+    box = document.createElement("aside");
+    box.id = "attentionVideo";
+    box.className = "attention-video";
+    box.setAttribute("aria-label", "Focus video");
+    var src = "https://www.youtube-nocookie.com/embed/" + ATTENTION_VIDEO +
+      "?autoplay=1&mute=1&loop=1&playlist=" + ATTENTION_VIDEO + "&playsinline=1&rel=0&modestbranding=1";
+    box.innerHTML =
+      '<button type="button" class="av-x" aria-label="Turn off focus video">×</button>' +
+      '<iframe src="' + src + '" title="Focus video" allow="autoplay; encrypted-media; picture-in-picture" ' +
+      'referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>';
+    box.querySelector(".av-x").addEventListener("click", function () { set({ attention: false }); });
+    document.body.appendChild(box);
+  }
+
   function apply(announce) {
     applyScale(prefs.scale);
     applyCvd(prefs.cvd);
     applyDyslexia(prefs.dyslexia);
+    applyAttention(prefs.attention);
     syncPanel();
     if (announce) window.dispatchEvent(new CustomEvent("kaml:display", { detail: get() }));
   }
-  function get() { return { scale: prefs.scale, cvd: prefs.cvd, dyslexia: prefs.dyslexia }; }
+  function get() { return { scale: prefs.scale, cvd: prefs.cvd, dyslexia: prefs.dyslexia, attention: prefs.attention }; }
   function set(p) {
     if (p.scale !== undefined) prefs.scale = validScale(p.scale);
     if (p.cvd !== undefined) prefs.cvd = validCvd(p.cvd);
     if (p.dyslexia !== undefined) prefs.dyslexia = p.dyslexia === true;
+    if (p.attention !== undefined) prefs.attention = p.attention === true;
     store(prefs);
     apply(true);
   }
@@ -266,15 +300,16 @@
   }
 
   // ------------------------------------------------------------------
-  // Survey: saving it with "Dyslexia-friendly font" ticked or unticked turns
-  // the font on or off. (survey.js pre-ticks the box from get().dyslexia, so
-  // the two stay in step.) A skipped survey changes nothing.
+  // Survey: saving it with "Dyslexia-friendly font" / "Short attention span"
+  // ticked or unticked turns that feature on or off. (survey.js pre-ticks the
+  // boxes from get(), so the two stay in step.) A skipped survey changes nothing.
   // ------------------------------------------------------------------
   window.addEventListener("kaml:accessibility", function (e) {
     var p = e.detail;
     if (!p || p.skipped) return;
-    var want = (p.needs || []).indexOf("dyslexia") >= 0;
-    if (want !== prefs.dyslexia) set({ dyslexia: want });
+    var needs = p.needs || [];
+    var dys = needs.indexOf("dyslexia") >= 0, att = needs.indexOf("attention") >= 0;
+    if (dys !== prefs.dyslexia || att !== prefs.attention) set({ dyslexia: dys, attention: att });
   });
 
   // ------------------------------------------------------------------

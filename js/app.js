@@ -94,7 +94,32 @@
   var defaultState = JSON.parse(JSON.stringify(state));
   var authUser = null, authEpoch = 0, profileLoading = true;
   var signingOut = false, saveTimer = null, saveRevision = 0;
-  var authMode = "login";
+  var authMode = "login", guestActive = false;
+  var GUEST_PROFILE_KEY = "kaml-guest-profile-v1";
+  var GUEST_SESSION_KEY = "kaml-guest-session-v1";
+
+  // Guest data never touches Firebase. It belongs only to this browser.
+  function guestSessionSaved() {
+    try { return localStorage.getItem(GUEST_SESSION_KEY) === "1"; }
+    catch (error) { return false; }
+  }
+
+  function rememberGuestSession(active) {
+    try {
+      if (active) localStorage.setItem(GUEST_SESSION_KEY, "1");
+      else localStorage.removeItem(GUEST_SESSION_KEY);
+    } catch (error) { console.warn("Guest session cannot be remembered:", error); }
+  }
+
+  function readGuestProfile() {
+    try {
+      var value = localStorage.getItem(GUEST_PROFILE_KEY);
+      return value ? JSON.parse(value) : null;
+    } catch (error) {
+      console.warn("Guest profile could not be restored:", error);
+      return null;
+    }
+  }
 
   function saveStatus(message) {
     var el = $("#saveStatus");
@@ -109,6 +134,10 @@
     $("#authUserEmail").style.display = visible ? "inline" : "none";
     $("#saveStatus").style.display = visible ? "inline" : "none";
     $("#logoutBtn").style.display = (visible || authUser) ? "inline-block" : "none";
+    $("#logoutBtn").textContent = guestActive ? "Sign in" : "Log out";
+    $(".privacy").textContent = guestActive
+      ? "Guest: saved on this browser, not in Firebase"
+      : "🔒 Your account profile is stored in Firebase";
   }
 
   function resetProfile() {
@@ -220,7 +249,7 @@
   }
 
   function scheduleSave() {
-    if (!authUser || profileLoading || signingOut) return;
+    if ((!authUser && !guestActive) || profileLoading || signingOut) return;
     clearTimeout(saveTimer);
     saveStatus("Unsaved changes…");
     ++saveRevision;
@@ -228,21 +257,53 @@
   }
 
   async function persistProfile() {
-    if (!authUser || profileLoading || signingOut) return;
-    var userId = authUser.uid, revision = saveRevision;
+    if ((!authUser && !guestActive) || profileLoading || signingOut) return;
+    var userId = guestActive ? null : authUser.uid, revision = saveRevision;
     try {
       var data = snapshotProfile();
       saveStatus("Saving…");
-      await window.KamLAuth.save(data);
-      if (authUser && authUser.uid === userId && revision === saveRevision) saveStatus("Saved ✓");
+      if (guestActive) {
+        // Local-only guest profile: do not call KamLAuth.save / Firestore.
+        localStorage.setItem(GUEST_PROFILE_KEY, JSON.stringify(data));
+        if (guestActive && revision === saveRevision) saveStatus("Saved on this browser ✓");
+      } else {
+        await window.KamLAuth.save(data);
+        if (authUser && authUser.uid === userId && revision === saveRevision) saveStatus("Saved ✓");
+      }
     } catch (error) {
-      if (authUser && authUser.uid === userId) saveStatus("Save failed: " + error.message);
+      if (guestActive || (authUser && authUser.uid === userId)) saveStatus("Save failed: " + error.message);
     }
+  }
+
+  function enterGuest() {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    ++authEpoch;
+    authUser = null;
+    guestActive = true;
+    profileLoading = true;
+    rememberGuestSession(true);
+    applySavedProfile(readGuestProfile());
+    profileLoading = false;
+    setAppVisible(true);
+    $("#authUserEmail").textContent = "Guest";
+    saveStatus("Guest data saves on this browser only");
+    window.KamLApp.authReady = true;
+    window.dispatchEvent(new CustomEvent("kaml:authenticated"));
+  }
+
+  function closeVoiceUi() {
+    if (window.KamL && window.KamL.voice) window.KamL.voice.cancel(false);
+    var voiceDock = $("#voiceDock"), voiceMini = $(".voice-mini");
+    if (voiceDock) voiceDock.hidden = true;
+    if (voiceMini) voiceMini.hidden = true;
+    document.body.classList.remove("has-voice");
   }
 
   function displayAuthForm(message) {
     setAppVisible(false);
     $("#authForm").style.display = "block";
+    $("#guestBtn").style.display = "block";
     $("#authRetry").style.display = "none";
     $("#authStatus").textContent = message || "Log in to continue.";
     $("#authSubmit").disabled = false;
@@ -266,6 +327,7 @@
     profileLoading = true;
     setAppVisible(false);
     $("#authForm").style.display = "none";
+    $("#guestBtn").style.display = "none";
     $("#authRetry").style.display = "none";
     $("#authStatus").textContent = "Loading your saved profile…";
     try {
@@ -294,6 +356,10 @@
     }
     $("#authSwitch").addEventListener("click", function () {
       setAuthMode(authMode === "login" ? "register" : "login");
+    });
+    $("#guestBtn").addEventListener("click", function () {
+      if (signingOut || authUser) return;
+      enterGuest();
     });
     $("#authForm").addEventListener("submit", async function (event) {
       event.preventDefault();
@@ -325,6 +391,22 @@
     });
     $("#logoutBtn").addEventListener("click", async function () {
       if (signingOut) return;
+      if (guestActive) {
+        // Switch to the login screen without logging into or writing to Firebase.
+        clearTimeout(saveTimer);
+        saveTimer = null;
+        await persistProfile();
+        guestActive = false;
+        rememberGuestSession(false);
+        profileLoading = true;
+        window.KamLApp.authReady = false;
+        resetProfile();
+        applyAccountPreferences(null);
+        closeVoiceUi();
+        setAuthMode("login");
+        displayAuthForm("Sign in to use your online profile, or continue as a guest.");
+        return;
+      }
       signingOut = true;
       $("#logoutBtn").disabled = true;
       clearTimeout(saveTimer);
@@ -344,8 +426,11 @@
       }
     });
     if (!api.available()) {
-      displayAuthForm(api.setupMessage);
-      $("#authSubmit").disabled = true;
+      if (guestSessionSaved()) enterGuest();
+      else {
+        displayAuthForm(api.setupMessage);
+        $("#authSubmit").disabled = true;
+      }
       return;
     }
     api.onSessionChanged(function (user, error) {
@@ -353,22 +438,25 @@
       clearTimeout(saveTimer);
       saveTimer = null;
       authUser = user || null;
+      guestActive = false;
       window.KamLApp.authReady = false;
       if (!user) {
+        if (guestSessionSaved()) {
+          enterGuest();
+          return;
+        }
         profileLoading = true;
         resetProfile();
         setAuthMode("login");
         $("#authPassword").value = "";
         $("#authConfirm").value = "";
         $("#authUserEmail").textContent = "";
-        if (window.KamL && window.KamL.voice) window.KamL.voice.cancel(false);
-        var voiceDock = $("#voiceDock"), voiceMini = $(".voice-mini");
-        if (voiceDock) voiceDock.hidden = true;
-        if (voiceMini) voiceMini.hidden = true;
-        document.body.classList.remove("has-voice");
-        displayAuthForm(error ? error.message : "Log in or create an account to save your data online.");
+        closeVoiceUi();
+        displayAuthForm(error ? error.message : "Log in, create an account, or continue as a guest.");
         return;
       }
+      // Real signed-in accounts take precedence over a remembered guest session.
+      rememberGuestSession(false);
       loadCurrentAccount(user, epoch);
     });
   }

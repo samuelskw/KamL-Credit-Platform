@@ -268,3 +268,40 @@ tfoot td { font-weight: 700; border-bottom: 0; }
 .err:empty { display: none; }
 .err::before { content: "⚠ "; }
 input[aria-invalid="true"] { border-color: var(--critical) !important; background: var(--critical-soft); }
+
+/* ---------- voice assistant ---------- */
+.voice-dock { position: fixed; right: 16px; bottom: 16px; z-index: 55; width: 380px; max-width: calc(100% - 32px); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 10px 40px rgba(0,0,0,.18); padding: 14px 16px; }
+.voice-dock[hidden], .voice-mini[hidden] { display: none; }
+.vd-head { display: flex; align-items: center; gap: 8px; }
+.vd-title { font-weight: 700; }
+.vd-status { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); }
+.vd-status[data-s="listening"] { background: var(--critical-soft); color: var(--text); }
+.vd-status[data-s="speaking"] { background: var(--accent-soft); color: var(--text); }
+.vd-x { margin-left: auto; border: 0; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; color: var(--text-2); padding: 2px 6px; }
+.vd-progress { font-size: 12px; color: var(--text-3); margin-top: 6px; }
+.vd-progress:empty { display: none; }
+.vd-prompt { margin-top: 6px; font-size: 15px; font-weight: 500; max-height: 140px; overflow: auto; }
+.vd-heard { margin-top: 8px; font-size: 14px; background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+.vd-heard:empty { display: none; }
+.vd-heard .interim { color: var(--text-3); font-style: italic; }
+.vd-label { font-size: 12px; color: var(--text-3); font-weight: 600; }
+.vd-result { margin-top: 6px; font-size: 13.5px; font-weight: 500; }
+.vd-result:empty { display: none; }
+.vd-result.good { color: var(--text); } .vd-result.good::first-letter { color: var(--good); }
+.vd-result.bad { color: var(--critical); }
+.vd-ctrl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
+.vd-ctrl button { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 8px 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.vd-ctrl button:hover { border-color: var(--accent); }
+.vd-ctrl button[hidden] { display: none; }
+.vd-mic.on { background: var(--critical); color: #fff; border-color: var(--critical); animation: vpulse 1.2s infinite; }
+@keyframes vpulse { 50% { box-shadow: 0 0 0 6px var(--critical-soft); } }
+.vd-ctrl2 { display: flex; gap: 8px; margin-top: 8px; }
+.vd-ctrl2 .btn { flex: 1; }
+.vd-ctrl2 [hidden] { display: none; }
+.vd-note { font-size: 11.5px; color: var(--text-3); margin-top: 8px; }
+.voice-mini { position: fixed; right: 16px; bottom: 16px; z-index: 55; border: 0; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 600; padding: 12px 18px; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
+.voice-focus { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 10px; }
+body.has-voice main { padding-bottom: 340px; }
+@media (max-width: 600px) {
+  .voice-dock { right: 8px; left: 8px; bottom: 8px; width: auto; max-width: none; }
+}

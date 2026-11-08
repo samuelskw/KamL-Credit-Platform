@@ -117,8 +117,12 @@
       var explain = (form.querySelector('input[name="explain"]:checked') || {}).value || "explained";
       var rate = (form.querySelector('input[name="speechRate"]:checked') || {}).value || "normal";
       save({ needs: needs, explain: explain, speechRate: rate, skipped: false, completedAt: new Date().toISOString() });
-      var names = NEEDS.filter(function (n) { return needs.indexOf(n.id) >= 0; }).map(function (n) { return n.label; });
-      close(names.length ? "Thanks — we've saved your preferences: " + names.join(", ") + ". These features are coming soon." : "Thanks — your preferences are saved.");
+      var LIVE = ["tts", "stt"]; // implemented in voice.js
+      var live = needs.filter(function (n) { return LIVE.indexOf(n) >= 0; }).length > 0;
+      var soon = NEEDS.filter(function (n) { return needs.indexOf(n.id) >= 0 && LIVE.indexOf(n.id) < 0; }).map(function (n) { return n.label; });
+      var msg = live ? "Voice assistant is on — use the panel at the bottom right. " : "Thanks — your preferences are saved. ";
+      if (soon.length) msg += soon.join(", ") + (soon.length > 1 ? " are" : " is") + " coming soon.";
+      close(msg.trim());
     });
 
     var first = form.querySelector("input");

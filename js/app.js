@@ -691,6 +691,20 @@
     else summary += "No factor is seriously holding you back — keep doing what you're doing.";
     $("#scoreSummary").innerHTML = summary;
 
+    var support = $("#supportBox");
+    var needsSupport = res.band.label === "Poor" || res.band.label === "Very poor";
+    support.hidden = !needsSupport;
+    support.innerHTML = needsSupport
+      ? '<div class="alert ' + res.band.status + ' support-box">' +
+          "<b>You don't have to deal with this alone.</b> If money worries are getting on top of you, " +
+          "these free, confidential services can help:" +
+          "<ul>" +
+            '<li><a href="https://nationaldebtline.org/" target="_blank" rel="noopener noreferrer">National Debtline</a> — free debt advice and tools to plan your way out of debt.</li>' +
+            '<li><a href="https://www.citizensadvice.org.uk/debt-and-money/help-with-debt/" target="_blank" rel="noopener noreferrer">Citizens Advice — help with debt</a> — guidance on dealing with creditors and priority bills.</li>' +
+            '<li><a href="https://www.samaritans.org/how-we-can-help/contact-samaritan/" target="_blank" rel="noopener noreferrer">Samaritans</a> — someone to talk to, any time, if you\'re struggling to cope.</li>' +
+          "</ul></div>"
+      : "";
+
     var pd = R.probabilityOfDefault(res.score, res.type);
     $("#scoreKpis").innerHTML =
       kpi(res.potential, "Achievable score if you act on the tips") +

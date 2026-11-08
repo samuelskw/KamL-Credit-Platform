@@ -265,6 +265,11 @@ tfoot td { font-weight: 700; border-bottom: 0; }
 .alert { border-radius: 10px; padding: 12px 14px; font-size: calc(14px * var(--fs, 1)); margin-top: 12px; }
 .alert.critical { background: var(--critical-soft); }
 .alert.warning { background: var(--warning-soft); }
+.alert.serious { background: var(--serious-soft); }
+.support-box { margin-top: 16px; line-height: 1.5; }
+.support-box ul { margin: 8px 0 0; padding-left: 20px; }
+.support-box li { margin-top: 4px; }
+.support-box a { color: inherit; font-weight: 600; text-decoration: underline; }
 
 @media (max-width: 900px) {
   .grid-2, .score-hero, .grid-even { grid-template-columns: minmax(0, 1fr); }

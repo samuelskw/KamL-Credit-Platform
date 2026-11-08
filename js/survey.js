@@ -16,7 +16,6 @@
     { id: "tts", icon: "🔊", label: "Text to speech", desc: "Read pages, scores and explanations aloud" },
     { id: "stt", icon: "🎙️", label: "Speech to text", desc: "Fill in forms by speaking instead of typing" },
     { id: "focus", icon: "🎯", label: "Focus mode", desc: "Fewer details on screen and plain-English explanations of your finances" },
-    { id: "largeText", icon: "🔠", label: "Larger text", desc: "Bigger, easier-to-read text" },
     { id: "contrast", icon: "◑", label: "High contrast", desc: "Stronger colours and borders" },
     { id: "motion", icon: "⏸️", label: "Reduced motion", desc: "No animations or transitions" },
     { id: "dyslexia", icon: "📖", label: "Dyslexia-friendly font", desc: "Wider letter spacing and a clearer typeface" }
@@ -118,7 +117,7 @@
       var rate = (form.querySelector('input[name="speechRate"]:checked') || {}).value || "normal";
       save({ needs: needs, explain: explain, speechRate: rate, skipped: false, completedAt: new Date().toISOString() });
       var LIVE = ["tts", "stt"]; // implemented in voice.js
-      var live = needs.filter(function (n) { return LIVE.indexOf(n) >= 0; }).length > 0;
+      var live = needs.indexOf("tts") >= 0 || needs.indexOf("stt") >= 0;
       var soon = NEEDS.filter(function (n) { return needs.indexOf(n.id) >= 0 && LIVE.indexOf(n.id) < 0; }).map(function (n) { return n.label; });
       var msg = live ? "Voice assistant is on — use the panel at the bottom right. " : "Thanks — your preferences are saved. ";
       if (soon.length) msg += soon.join(", ") + (soon.length > 1 ? " are" : " is") + " coming soon.";

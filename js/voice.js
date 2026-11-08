@@ -412,7 +412,11 @@
     }
     var err = fieldError(item);
     if (err && (prefix || "").indexOf(err) >= 0) err = "";
-    sayThenListen((prefix || "") + intro + (err ? "Error: " + err + " " : "") + question(item) + (opts.suffix || ""));
+    var widget = V.kb ? widgetWord(item) + ": " : ""; // keyboard users hear what kind of control they're on
+    sayThenListen((prefix || "") + intro + (err ? "Error: " + err + " " : "") + widget + question(item) + (opts.suffix || ""));
+  }
+  function widgetWord(item) {
+    return { type: "Choice of two buttons", select: "Drop-down list", checkbox: "Tick box", checks: "Group of tick boxes", text: "Edit box" }[item.kind] || "Edit box";
   }
 
   function itemEl(item) {
@@ -558,6 +562,8 @@
       if (cmd === "next" || cmd === "prev") return moveFocus(cmd === "next" ? 1 : -1);
       if (cmd === "repeat") return fe ? say(describe(fe).text) : ask(V.idx);
       if (!cmd && PRESS.test(clean(alts[0]))) return activate(fe);
+      var yn = yesNo(fe, alts[0], cmd);
+      if (yn) return yn();
       if (!cmd) return say("You are on " + (fe ? describe(fe).text : "the page.") + " Say press to select it, next or previous to move, or go to and a question name.");
     }
     if (cmd === "next") return V.phase === "end" ? sayThenListen("That was the last question. Say evaluate, previous, or cancel.") : next();
@@ -677,6 +683,8 @@
       text = ((cmd.go && !cmd.loose) ? cmd.go + " " : "") + val; // fall through to the step's own parsing ("amount 20000")
       c = clean(text); alts = [text]; cmd = null;
     }
+    var yn = yesNo(fe, text, cmd);
+    if (yn) return yn();
     if (fe && !cmd) {
       if (PRESS.test(c)) return activate(fe);
       if (applyToFocused(fe, alts)) return;
@@ -849,7 +857,8 @@
   // mic opens after the assistant finishes so the user can just say it.
   var PRESS = /^(press|press it|press enter|select|select it|click|click it|choose it|open|open it|activate|enter|ok|okay|go)( please)?$/;
   var NAV_SEL = 'a[href], button:not([disabled]), summary, input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-  var READ_SEL = ".panel.active h2, .panel.active h3, .panel.active .reasons li, .panel.active .kpis > *, .panel.active .notice, #modalBody h2, #modalBody p";
+  var READ_SEL = ".panel.active h2, .panel.active h3, .panel.active .reasons li, .panel.active .kpis > *, .panel.active .notice, #modalBody h2, #modalBody p, " +
+    "#riskOut .alert, #riskOut .card"; // step 3 is read card by card (see sectionInfo)
   var lastKeyAt = 0;
 
   function textOf(el) {
@@ -874,7 +883,116 @@
     return $("#modal").classList.contains("on") ? $("#modalBody") : document.body;
   }
   function navItems(root) {
-    return $$(NAV_SEL + ", " + READ_SEL, root).filter(isVisible);
+    return $$(NAV_SEL + ", " + READ_SEL, root).filter(function (el) {
+      if (!isVisible(el) || el.closest("svg, .stack, .legend")) return false; // diagrams and charts are skipped
+      if (el.closest("#riskOut")) return el.matches("#riskOut .card, #riskOut .alert") && !$("svg", el); // whole cards; no rate graph
+      return true;
+    });
+  }
+
+  // ---- Step 3: each card is one "section" with a summary and an optional "why" ----
+  function speakNums(t) {
+    return String(t).replace(/(\d)\s*%/g, "$1 percent").replace(/\s*[–—-]\s*(?=\d|£)/g, " to ").replace(/<\s*/g, "under ")
+      .replace(/\s*→\s*/g, ", then ").replace(/\s*·\s*/g, ", ").replace(/\s{2,}/g, " ");
+  }
+  function sectionInfo(el) {
+    if (!el || !el.closest || !el.closest("#riskOut") || !el.matches(".card, .alert")) return null;
+    var s = A.state, rk = s.risk, req = s.request[s.type];
+    if (!rk) return null;
+    if (el.classList.contains("alert")) return { text: "Warning: " + textOf(el) };
+    var title = textOf($(".eyebrow", el) || $("h3", el));
+    var loanName = rk.product.label.split(" (")[0].toLowerCase();
+    if (/^Risk grade/i.test(title)) {
+      return {
+        text: "Risk grade, section. Tier " + rk.tier.id + ", " + rk.tier.label + " risk. " + rk.tier.desc +
+          " Probability of default in the next 12 months: " + pct(rk.pd * 100) + ". Loss given default for " + loanName + ": " + pct(rk.lgd * 100) +
+          ". Expected loss: " + pct(rk.el * 100) + ".",
+        ask: "Do you want to see why? Press Enter or say yes.",
+        more: "Why: your credit score of " + s.result.score + " puts you in tier " + rk.tier.id + ". Out of every 1,000 borrowers with a score like yours, about " +
+          Math.round(rk.pd * 1000) + " are expected to stop repaying within a year. That is the probability of default. If that happens, the bank expects to lose " +
+          pct(rk.lgd * 100) + " of what is owed on " + loanName + ". That is the loss given default. Multiply the two and you get the expected loss, " +
+          pct(rk.el * 100) + ", which the bank adds to your interest rate. A higher score means a better tier and a lower rate."
+      };
+    }
+    var parts = rk.components.map(function (c) { return c.label + ", " + c.value.toFixed(2) + " percent"; }).join(". ");
+    if (/^Risk-based interest rate/i.test(title)) {
+      return {
+        text: "Risk-based interest rate, section. " + rk.rate.toFixed(2) + " percent a year. For " + money(req.amount) + " over " + A.fmtTerm(req.termMonths).replace("yrs", "years").replace("yr", "year") +
+          ", about " + money(K.risk.payment(req.amount, rk.rate, req.termMonths)) + " a month before lender adjustments. Risk premium: " + rk.riskPremium.toFixed(2) + " percent.",
+        ask: "Do you want to see why? Press Enter or say yes.",
+        more: "Why: your rate is made up of these parts. " + parts + ". Total, " + rk.rate.toFixed(2) + " percent. The risk premium of " + rk.riskPremium.toFixed(2) +
+          " percent is the extra you pay because of your credit risk. Improving your score lowers it."
+      };
+    }
+    if (/^How the rate is built/i.test(title)) {
+      return {
+        text: "How the rate is built, section. Rate equals the base rate, plus funding spread, expected loss, capital charge, operating cost, and margin. Total, " + rk.rate.toFixed(2) + " percent.",
+        ask: "Do you want to see why each part exists? Press Enter or say yes.",
+        more: rk.components.map(function (c) { return c.label + ", " + c.value.toFixed(2) + " percent: " + c.note; }).join(". ") + "."
+      };
+    }
+    if (/^Bank risk tiers/i.test(title)) {
+      var rows = $$("tbody tr", el).map(function (tr) {
+        var td = $$("td", tr).map(textOf);
+        return "Tier " + speakNums(td[0]) + ": scores " + speakNums(td[1]) + ", default probability " + speakNums(td[2]) + ", rate " + speakNums(td[3]) + ".";
+      });
+      return {
+        text: "Bank risk tiers, section. Banks group borrowers into tiers A to E. You are in tier " + rk.tier.id + ", " + rk.tier.label + ".",
+        ask: "Do you want to hear every tier? Press Enter or say yes.",
+        more: rows.join(" ")
+      };
+    }
+    return { text: speakNums(textOf(el)) };
+  }
+
+  // ---- Step 2: score factor rows (expand to hear the explanation) ----
+  function factorName(el) { // the h4 is: chevron, name text, rating badge, weight
+    var h4 = $("h4", el), node = h4 && h4.childNodes[1];
+    return node && node.nodeType === 3 ? node.textContent.trim() : textOf(h4 || el);
+  }
+  function factorInfo(el) {
+    var name = factorName(el);
+    var rating = textOf($(".badge", el)), share = textOf($(".small", el)), pts = textOf($(".pts", el)).replace(/(\d+) \/ (\d+) pts/, "$1 of $2 points");
+    var open = el.getAttribute("aria-expanded") === "true";
+    return {
+      text: name + ", expandable button, " + (open ? "expanded" : "collapsed") + ". Rated " + rating + ". " + speakNums(share) + ". " + pts + ".",
+      ask: open ? "Press Enter to hide the explanation." : "Press Enter, or say yes, to see more explanation and how to improve."
+    };
+  }
+  function factorDetails(el) {
+    var body = el.nextElementSibling;
+    if (!body) return "";
+    var good = $$(".reasons.pos li", body).map(textOf), bad = $$(".reasons.neg li", body).map(textOf);
+    var t = factorName(el) + ", expanded. ";
+    if (good.length) t += "Helping: " + good.join(" ") + " ";
+    if (bad.length) t += "Holding it back: " + bad.join(" ") + " ";
+    t += speakNums(textOf($(".tip", body))) + " " + textOf($(".uses", body)) + ".";
+    return t.replace(/\.\./g, ".");
+  }
+
+  // ---- Buttons: say what pressing them will do, as a question ----
+  function stepName(n) { var b = $('.step-btn[data-step="' + n + '"] .t'); return b ? textOf(b).toLowerCase() : ""; }
+  function buttonQuestion(el) {
+    if (el.closest("#voiceDock")) return "";
+    if (el.id === "evalBtn") return "Do you want to evaluate your credit and go to the next step, step 2, " + stepName(2) + "? Press Enter or say yes.";
+    var n = el.dataset.goto || (el.classList.contains("step-btn") ? el.dataset.step : null);
+    if (n) {
+      n = +n;
+      if (n === V.step) return "This is the step you are on.";
+      return "Do you want to go " + (n > V.step ? "to the next step" : "back") + ", step " + n + ", " + stepName(n) + "? Press Enter or say yes.";
+    }
+    if (el.matches("[data-choose]")) return "Do you want to see this offer in full? Press Enter or say yes.";
+    if (el.matches("[data-confirm]")) return "Do you want to select this offer? Press Enter or say yes.";
+    if (el.matches("[data-close]")) return "Do you want to go back to the offers? Press Enter or say yes.";
+    if (el.matches("[data-persona]")) return "Do you want to fill in the form with this example? Press Enter or say yes.";
+    return "";
+  }
+  // Things a "yes" (or Enter) can activate.
+  function canActivate(el) {
+    if (!el) return false;
+    if (el.matches("button, a[href], summary, [data-toggle], [role=button]")) return true;
+    var sec = sectionInfo(el);
+    return !!(sec && sec.more);
   }
 
   // Move focus to the next / previous item in reading order.
@@ -916,14 +1034,23 @@
 
   // What to say when an element gets focus: {text, hint}.
   function describe(el) {
+    var sec = sectionInfo(el);
+    if (sec) return { text: sec.text + (sec.ask ? " " + sec.ask : ""), hint: "" };
+    if (el.matches("[data-toggle]")) { var fi = factorInfo(el); return { text: fi.text + " " + fi.ask, hint: "" }; }
     var name = nameOf(el), tag = el.tagName, type = (el.type || "").toLowerCase(), text, hint = "";
     if (tag === "SELECT") {
       text = name + ", drop-down list, " + (el.selectedOptions[0] ? textOf(el.selectedOptions[0]) : "nothing") + " selected.";
       hint = "Say your choice, or use the left and right arrows to change it.";
     } else if (type === "checkbox" || type === "radio") {
       var word = type === "radio" ? "selected" : "ticked";
-      text = name + ", " + (type === "radio" ? "option" : "tick box") + ", " + (el.checked ? word : "not " + word) + ".";
+      text = name + ", " + (type === "radio" ? "option" : "tick box") + ", " + (el.checked ? word : "not " + word);
       hint = "Press Space to " + (type === "radio" ? "select it." : "tick or untick it.");
+      if (el.dataset.multi) { // one of a group of tick boxes (step 1)
+        var grp = $$('[data-multi="' + el.dataset.multi + '"]');
+        text += ", option " + (grp.indexOf(el) + 1) + " of " + grp.length;
+        hint = "Use the left and right arrows to move between options, and Space to tick or untick.";
+      }
+      text += ".";
     } else if (type === "file") {
       text = name + ", file upload button.";
       hint = "Press Enter to choose a CSV file.";
@@ -941,12 +1068,15 @@
       var st = [];
       if (el.hasAttribute("aria-expanded")) st.push(el.getAttribute("aria-expanded") === "true" ? "expanded" : "collapsed");
       if ((el.closest(".seg") && el.classList.contains("on")) || el.classList.contains("active")) st.push(el.classList.contains("step-btn") ? "current step" : "selected");
-      text = name + ", button" + (st.length ? ", " + st.join(", ") : "") + ".";
-      hint = el.hasAttribute("aria-expanded") ? "Press Enter to open or close it." : "Press Enter to select it.";
+      text = name + ", " + (el.closest("#typeSeg") ? "toggle button" : el.classList.contains("step-btn") ? "step button" : "button") + (st.length ? ", " + st.join(", ") : "") + ".";
+      var q = buttonQuestion(el);
+      if (q) text += " " + q; // always asked: it tells the user what Enter will do
+      else hint = el.hasAttribute("aria-expanded") ? "Press Enter to open or close it." : "Press Enter to select it.";
     } else if (/^H[1-6]$/.test(tag)) {
-      text = "Heading: " + name + ".";
+      text = "Heading level " + tag.charAt(1) + ": " + name + ".";
     } else {
-      text = name + (/[.!?:]$/.test(name) ? "" : ".");
+      var kind = tag === "LI" ? "List item" : el.parentNode && el.parentNode.classList && el.parentNode.classList.contains("kpis") ? "Figure" : "Text";
+      text = kind + ": " + speakNums(name) + (/[.!?:]$/.test(name) ? "" : ".");
     }
     var err = el.id && document.getElementById(el.id + "_err");
     if (err && textOf(err)) text += " Error: " + textOf(err);
@@ -1009,13 +1139,23 @@
       return;
     }
     if (e.shiftKey) return;
+    // Step 1 groups (tick boxes like "Types of credit", Individual / Business): left and right move between the options.
+    if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && ((type === "checkbox" && el.dataset.multi) || el.closest("#typeSeg"))) {
+      var group = el.dataset.multi ? $$('[data-multi="' + el.dataset.multi + '"]') : $$("#typeSeg button");
+      var j = group.indexOf(el) + (e.key === "ArrowRight" ? 1 : -1);
+      e.preventDefault();
+      if (j < 0 || j >= group.length) return say((j < 0 ? "First option. " : "Last option. ") + describe(el).text);
+      V.navFocus = true;
+      try { group[j].focus(); } finally { V.navFocus = false; }
+      return;
+    }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       if (type === "radio" || type === "range" || tag === "TEXTAREA" || el.isContentEditable) return; // arrows already mean something there
       e.preventDefault(); // also stops number boxes counting up/down
       return moveFocus(e.key === "ArrowDown" ? 1 : -1);
     }
     if (e.key === "Enter") return onEnter(e, el, tag, type);
-    if (e.key === " " && el.getAttribute && el.getAttribute("tabindex") === "-1") { e.preventDefault(); say(describe(el).text); }
+    if (e.key === " " && el.getAttribute && el.getAttribute("tabindex") === "-1") { e.preventDefault(); activate(el); }
   }
 
   function onEnter(e, el, tag, type) {
@@ -1028,7 +1168,7 @@
       return;
     }
     if (tag === "INPUT") { e.preventDefault(); return commitTyped(el); }
-    if (el.getAttribute("tabindex") === "-1") { e.preventDefault(); say(describe(el).text); }
+    if (el.getAttribute("tabindex") === "-1") { e.preventDefault(); activate(el); } // a step 3 section: hear "why"
   }
 
   // Enter in an edit box: check the typed answer, then move on like a spoken one.
@@ -1057,10 +1197,23 @@
     }
   }
 
+  // Answering the question a focused button / row / section asked ("Do you want to…?").
+  // Returns a function to run, or null if this isn't a yes or no for it.
+  function yesNo(el, text, cmd) {
+    if (cmd || !el || !canActivate(el)) return null;
+    var c = clean(text);
+    if (YES.test(c) || /^(please|do it|go ahead|go on|show me|tell me|why)\b/.test(c)) return function () { activate(el); };
+    if (NO.test(c) || /^(not now|no thanks|skip)\b/.test(c)) return function () { say("OK. Use the arrow keys or Tab to move on."); };
+    return null;
+  }
+
   // "Press" by voice, or the Speak-free equivalent of Enter.
   function activate(el) {
     if (!el || !document.contains(el)) return say("Nothing is selected. Use Tab or the arrow keys to move.");
     var tag = el.tagName, type = (el.type || "").toLowerCase();
+    var sec = sectionInfo(el);
+    if (sec) return say(sec.more ? sec.more + " Press the down arrow to move on." : sec.text);
+    if (el.getAttribute("tabindex") === "-1" && !el.matches(NAV_SEL)) return say(describe(el).text); // plain text: read it again
     if (tag === "SELECT") { try { el.showPicker(); } catch (x) {} return say(describe(el).text + " Say the option you want."); }
     if (tag === "INPUT" && type !== "checkbox" && type !== "radio" && type !== "file") return say(describe(el).text + " Say your answer.");
     el.click();
@@ -1131,6 +1284,9 @@
     setTimeout(function () { // only if nothing else (like a step change) has spoken
       if (!V.on || V.session !== s) return;
       if (t.id === "evalBtn" && A.state.step === 1) return say((textOf($("#formError")) || "Some answers need fixing.") + " Use the arrow keys to find the question.");
+      if (t.matches("[data-toggle]")) { // step 2 factor: read the explanation when it opens
+        return say(t.getAttribute("aria-expanded") === "true" ? factorDetails(t) + " Press Enter to hide it, or the down arrow to move on." : factorInfo(t).text.replace(/\. Rated.*/, ".") + " Explanation hidden.");
+      }
       say(t.hasAttribute("aria-expanded") || t.tagName === "SUMMARY" || t.closest(".seg") ? describe(t).text : "Pressed " + nameOf(t) + ".");
     }, 60);
   }

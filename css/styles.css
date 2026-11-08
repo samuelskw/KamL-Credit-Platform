@@ -565,3 +565,20 @@ body.has-voice [tabindex="-1"]:focus { outline: 3px solid var(--accent); outline
   .steps::-webkit-scrollbar { display: none; }
   .step-btn { scroll-snap-align: start; }
 }
+
+@media (max-width: 900px) {
+  /* Flatten the two column wrappers so all four cards can be reordered */
+  .grid-2 > div,
+  .grid-2 > aside { display: contents; }
+
+  .grid-2 { gap: 16px; }
+  .grid-2 .card { margin-top: 0; }
+
+  /* Left column */
+  .grid-2 > div > .card:nth-child(1) { order: 1; } /* Try an example profile */
+  .grid-2 > div > .card:nth-child(2) { order: 3; } /* The form */
+
+  /* Right column */
+  .grid-2 > aside > .card:nth-child(1) { order: 2; } /* Bank statement */
+  .grid-2 > aside > .card:nth-child(2) { order: 4; } /* What data is used */
+}

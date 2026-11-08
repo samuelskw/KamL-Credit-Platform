@@ -88,6 +88,265 @@
   };
 
   // ------------------------------------------------------------------
+  // Firebase authentication and per-user cloud profile persistence.
+  // Uses the existing KamLAuth interface in auth.js (no new backend code).
+  // ------------------------------------------------------------------
+  var defaultState = JSON.parse(JSON.stringify(state));
+  var authUser = null, authEpoch = 0, profileLoading = true;
+  var signingOut = false, saveTimer = null, saveRevision = 0;
+  var authMode = "login";
+
+  function saveStatus(message) {
+    var el = $("#saveStatus");
+    el.textContent = message || "";
+    el.title = message || "";
+  }
+
+  function setAppVisible(visible) {
+    $("#authGate").style.display = visible ? "none" : "block";
+    $("#appMain").style.display = visible ? "block" : "none";
+    $("#steps").style.display = visible ? "flex" : "none";
+    $("#authUserEmail").style.display = visible ? "inline" : "none";
+    $("#saveStatus").style.display = visible ? "inline" : "none";
+    $("#logoutBtn").style.display = (visible || authUser) ? "inline-block" : "none";
+  }
+
+  function resetProfile() {
+    Object.keys(defaultState).forEach(function (key) {
+      state[key] = JSON.parse(JSON.stringify(defaultState[key]));
+    });
+    state.step = 1;
+    state.csvApplied = null;
+    state.lastOffers = null;
+    $("#csvResult").innerHTML = "";
+    $("#formError").innerHTML = "";
+    $("#sortBy").value = "apr";
+    $$("#typeSeg button").forEach(function (b) {
+      b.classList.toggle("on", b.dataset.type === state.type);
+    });
+    renderForm();
+    go(1);
+  }
+
+  function isRecord(value) {
+    return value && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function applySavedProfile(profile) {
+    resetProfile();
+    if (!isRecord(profile)) return;
+    state.type = profile.type === "business" ? "business" : "individual";
+    if (isRecord(profile.data)) {
+      ["individual", "business"].forEach(function (t) {
+        if (isRecord(profile.data[t])) state.data[t] = profile.data[t];
+      });
+    }
+    if (isRecord(profile.request)) {
+      ["individual", "business"].forEach(function (t) {
+        if (isRecord(profile.request[t])) {
+          state.request[t] = Object.assign({}, defaultState.request[t], profile.request[t]);
+        }
+      });
+    }
+    if (isRecord(profile.settings) && Number.isFinite(profile.settings.baseRate)) {
+      state.settings.baseRate = profile.settings.baseRate;
+    }
+    if (["apr", "monthly", "total", "likelihood"].indexOf(profile.sort) >= 0) state.sort = profile.sort;
+    state.chosen = typeof profile.chosen === "string" ? profile.chosen : null;
+    state.csvApplied = typeof profile.csvApplied === "string" ? profile.csvApplied : null;
+    $$("#typeSeg button").forEach(function (b) {
+      b.classList.toggle("on", b.dataset.type === state.type);
+    });
+    $("#sortBy").value = state.sort;
+    renderForm();
+    if (profile.evaluated === true) {
+      try {
+        state.result = S.evaluate(state.type, state.data[state.type]);
+        state.maxStep = 4;
+        renderScore();
+        renderLoanForm();
+        renderRisk();
+        renderOffers();
+      } catch (error) {
+        state.result = null;
+        state.maxStep = 1;
+        console.warn("Saved evaluation could not be rebuilt:", error);
+      }
+    }
+    var step = Number(profile.step);
+    go(Number.isInteger(step) && step >= 1 && step <= state.maxStep ? step : 1);
+  }
+
+  function snapshotProfile() {
+    state.data[state.type] = readForm();
+    return {
+      type: state.type,
+      data: state.data,
+      request: state.request,
+      settings: state.settings,
+      sort: state.sort,
+      chosen: state.chosen,
+      csvApplied: state.csvApplied || null,
+      evaluated: state.maxStep >= 4 && !!state.result,
+      step: state.step || 1
+    };
+  }
+
+  function scheduleSave() {
+    if (!authUser || profileLoading || signingOut) return;
+    clearTimeout(saveTimer);
+    saveStatus("Unsaved changes…");
+    ++saveRevision;
+    saveTimer = setTimeout(function () { saveTimer = null; persistProfile(); }, 650);
+  }
+
+  async function persistProfile() {
+    if (!authUser || profileLoading || signingOut) return;
+    var userId = authUser.uid, revision = saveRevision;
+    try {
+      var data = snapshotProfile();
+      saveStatus("Saving…");
+      await window.KamLAuth.save(data);
+      if (authUser && authUser.uid === userId && revision === saveRevision) saveStatus("Saved ✓");
+    } catch (error) {
+      if (authUser && authUser.uid === userId) saveStatus("Save failed: " + error.message);
+    }
+  }
+
+  function displayAuthForm(message) {
+    setAppVisible(false);
+    $("#authForm").style.display = "block";
+    $("#authRetry").style.display = "none";
+    $("#authStatus").textContent = message || "Log in to continue.";
+    $("#authSubmit").disabled = false;
+    $("#authSubmit").textContent = authMode === "login" ? "Log in" : "Create account";
+  }
+
+  function setAuthMode(mode) {
+    authMode = mode;
+    var register = mode === "register";
+    $("#authTitle").textContent = register ? "Create an account" : "Log in";
+    $("#authConfirmWrap").style.display = register ? "block" : "none";
+    $("#authConfirm").required = register;
+    $("#authPassword").autocomplete = register ? "new-password" : "current-password";
+    $("#authSubmit").textContent = register ? "Create account" : "Log in";
+    $("#authSwitchLabel").textContent = register ? "Already have an account?" : "Don't have an account?";
+    $("#authSwitch").textContent = register ? "Log in instead" : "Create an account";
+    $("#authError").textContent = "";
+  }
+
+  async function loadCurrentAccount(user, epoch) {
+    profileLoading = true;
+    setAppVisible(false);
+    $("#authForm").style.display = "none";
+    $("#authRetry").style.display = "none";
+    $("#authStatus").textContent = "Loading your saved profile…";
+    try {
+      var saved = await window.KamLAuth.load();
+      if (epoch !== authEpoch || !authUser || authUser.uid !== user.uid) return;
+      applySavedProfile(saved);
+      profileLoading = false;
+      setAppVisible(true);
+      $("#authUserEmail").textContent = user.email || "Signed in";
+      saveStatus("All changes saved automatically");
+      window.KamLApp.authReady = true;
+      window.dispatchEvent(new CustomEvent("kaml:authenticated"));
+    } catch (error) {
+      if (epoch !== authEpoch) return;
+      $("#authStatus").textContent = "Your profile could not be loaded: " + error.message;
+      $("#authRetry").style.display = "inline-block";
+      $("#logoutBtn").style.display = "inline-block";
+    }
+  }
+
+  function bindAuthentication() {
+    var api = window.KamLAuth;
+    if (!api) {
+      $("#authStatus").textContent = "Authentication is unavailable. Check the Firebase scripts.";
+      return;
+    }
+    $("#authSwitch").addEventListener("click", function () {
+      setAuthMode(authMode === "login" ? "register" : "login");
+    });
+    $("#authForm").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      $("#authError").textContent = "";
+      var email = $("#authEmail").value.trim();
+      var password = $("#authPassword").value;
+      if (!email || !password) {
+        $("#authError").textContent = "Enter your email and password.";
+        return;
+      }
+      if (authMode === "register" && password !== $("#authConfirm").value) {
+        $("#authError").textContent = "Passwords do not match.";
+        return;
+      }
+      $("#authSubmit").disabled = true;
+      $("#authSubmit").textContent = "Please wait…";
+      try {
+        if (authMode === "register") await api.register(email, password);
+        else await api.login(email, password);
+        $("#authStatus").textContent = "Signing you in…";
+      } catch (error) {
+        $("#authError").textContent = error.message;
+        $("#authSubmit").disabled = false;
+        $("#authSubmit").textContent = authMode === "login" ? "Log in" : "Create account";
+      }
+    });
+    $("#authRetry").addEventListener("click", function () {
+      if (authUser) loadCurrentAccount(authUser, authEpoch);
+    });
+    $("#logoutBtn").addEventListener("click", async function () {
+      if (signingOut) return;
+      signingOut = true;
+      $("#logoutBtn").disabled = true;
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      try {
+        if (!profileLoading) {
+          saveStatus("Saving before logout…");
+          await api.save(snapshotProfile());
+        }
+        await api.logout();
+      } catch (error) {
+        $("#authStatus").textContent = "Could not log out: " + error.message;
+        saveStatus("Could not save/log out: " + error.message);
+      } finally {
+        signingOut = false;
+        $("#logoutBtn").disabled = false;
+      }
+    });
+    if (!api.available()) {
+      displayAuthForm(api.setupMessage);
+      $("#authSubmit").disabled = true;
+      return;
+    }
+    api.onSessionChanged(function (user, error) {
+      var epoch = ++authEpoch;
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      authUser = user || null;
+      window.KamLApp.authReady = false;
+      if (!user) {
+        profileLoading = true;
+        resetProfile();
+        setAuthMode("login");
+        $("#authPassword").value = "";
+        $("#authConfirm").value = "";
+        $("#authUserEmail").textContent = "";
+        if (window.KamL && window.KamL.voice) window.KamL.voice.cancel(false);
+        var voiceDock = $("#voiceDock"), voiceMini = $(".voice-mini");
+        if (voiceDock) voiceDock.hidden = true;
+        if (voiceMini) voiceMini.hidden = true;
+        document.body.classList.remove("has-voice");
+        displayAuthForm(error ? error.message : "Log in or create an account to save your data online.");
+        return;
+      }
+      loadCurrentAccount(user, epoch);
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Number validation
   // ------------------------------------------------------------------
   // Per-field rules (default: decimal, min 0, no max). int = whole numbers only.
@@ -268,6 +527,7 @@
     });
     window.scrollTo(0, 0);
     state.step = step;
+    scheduleSave();
     window.dispatchEvent(new CustomEvent("kaml:step", { detail: { step: step } }));
   }
 
@@ -596,6 +856,7 @@
       writeForm(d);
       state.csvApplied = a.transactions + " transactions over " + a.months + " month" + (a.months > 1 ? "s" : "");
       var top = Object.keys(a.spending).filter(function (k) { return a.spending[k] > 0; }).sort(function (x, y) { return a.spending[y] - a.spending[x]; }).slice(0, 4);
+      scheduleSave();
       out.innerHTML = '<div class="alert" style="background:var(--good-soft)"><b>' + esc(name) + "</b>: analysed " + state.csvApplied + ".<br>Avg. income " + money(a.monthlyIncome) +
         "/mo (" + a.incomeVariability + "), spending " + money(spendTotal) + "/mo. Top: " + top.map(function (k) { return k + " " + money(a.spending[k]); }).join(", ") +
         (a.overdraftDaysPerMonth ? ". Overdrawn ~" + a.overdraftDaysPerMonth + " days/mo." : ".") + "<br>The form has been updated.</div>";
@@ -643,6 +904,7 @@
     renderRisk();
     renderOffers();
     go(2);
+    scheduleSave();
   }
 
   // ------------------------------------------------------------------
@@ -658,11 +920,15 @@
     state.maxStep = 1;
     renderForm();
     go(1);
+    scheduleSave();
   }
 
   function bind() {
     // Live filter on every numeric field (form + loan inputs): only digits / one decimal point survive.
     document.addEventListener("input", function (e) { if (e.target.dataset && e.target.dataset.num) sanitizeNumber(e.target); });
+    // Save form changes, including text fields, checkboxes and spending.
+    $("#form").addEventListener("input", scheduleSave);
+    $("#form").addEventListener("change", scheduleSave);
     document.addEventListener("focusout", function (e) {
       var el = e.target;
       if (el.dataset && el.dataset.num && el.closest("#form")) setErr(el, checkNumber(el, false));
@@ -675,8 +941,9 @@
       state.data[p.type] = JSON.parse(JSON.stringify(p.data));
       state.request[p.type] = Object.assign({}, p.request);
       writeForm(state.data[p.type]);
+      scheduleSave();
     });
-    $("#resetBtn").addEventListener("click", function () { state.data[state.type] = {}; writeForm({}); $("#csvResult").innerHTML = ""; state.csvApplied = null; });
+    $("#resetBtn").addEventListener("click", function () { state.data[state.type] = {}; writeForm({}); $("#csvResult").innerHTML = ""; state.csvApplied = null; scheduleSave(); });
     $("#evalBtn").addEventListener("click", evaluate);
     $("#steps").addEventListener("click", function (e) { var b = e.target.closest(".step-btn"); if (b && !b.disabled) go(b.dataset.step); });
     document.addEventListener("click", function (e) {
@@ -685,7 +952,7 @@
       var c = e.target.closest("[data-choose]"); if (c) openOffer(c.dataset.choose);
       if (e.target.closest("[data-close]") || e.target.id === "modal") $("#modal").classList.remove("on");
       var cf = e.target.closest("[data-confirm]");
-      if (cf) { state.chosen = cf.dataset.confirm; $("#modal").classList.remove("on"); renderOffers(); }
+      if (cf) { state.chosen = cf.dataset.confirm; $("#modal").classList.remove("on"); renderOffers(); scheduleSave(); }
     });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") $("#modal").classList.remove("on"); });
     $("#expandAll").addEventListener("click", function () {
@@ -707,8 +974,9 @@
       if (e.target.id === "lf_amount") req.amount = parseFloat(e.target.value);
       if (e.target.id === "lf_base") state.settings.baseRate = parseFloat(e.target.value);
       renderRisk(); renderOffers();
+      scheduleSave();
     });
-    $("#sortBy").addEventListener("change", function () { state.sort = this.value; renderOffers(); });
+    $("#sortBy").addEventListener("change", function () { state.sort = this.value; renderOffers(); scheduleSave(); });
 
     // rate stack tooltips
     $("#riskOut").addEventListener("mousemove", function (e) { var s = e.target.closest("[data-tip]"); if (s) showTip(e, esc(s.dataset.tip)); });
@@ -750,9 +1018,11 @@
   bind();
   // Public hooks (used by voice.js and tests)
   window.KamLApp = {
+    authReady: false,
     state: state, evaluate: evaluate, go: go, setType: setType,
     allFields: function () { return allFields(state.type); },
     checkNumber: checkNumber, setErr: setErr, limitFor: limitFor,
     productsFor: productsFor, termOptions: termOptions, fmtTerm: fmtTerm
   };
+  bindAuthentication();
 })();

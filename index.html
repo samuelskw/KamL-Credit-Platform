@@ -14,12 +14,15 @@
     <div class="wrap bar">
       <div class="brand"><div class="brand-mark">K</div>KamL Credit <small>make credit accessible</small></div>
       <div class="spacer"></div>
-      <div class="privacy">🔒 Runs entirely in your browser — no data leaves your device</div>
+      <div class="privacy">🔒 Your account profile is stored in Firebase</div>
+      <span id="authUserEmail" class="small muted" style="display:none;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+      <span id="saveStatus" class="small muted" role="status" style="display:none;white-space:nowrap"></span>
+      <button class="btn ghost sm" id="logoutBtn" type="button" style="display:none">Log out</button>
       <button class="btn ghost sm" id="a11yBtn" type="button" aria-label="Accessibility preferences">♿ Accessibility</button>
       <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle colour theme">◐</button>
     </div>
     <div class="wrap">
-      <nav class="steps" id="steps">
+      <nav class="steps" id="steps" style="display:none">
         <button class="step-btn active" data-step="1"><div class="n">Step 1</div><div class="t">Your data</div></button>
         <button class="step-btn" data-step="2" disabled><div class="n">Step 2</div><div class="t">Credit score</div></button>
         <button class="step-btn" data-step="3" disabled><div class="n">Step 3</div><div class="t">Risk &amp; interest rate</div></button>
@@ -28,7 +31,39 @@
     </div>
   </header>
 
-  <main class="wrap">
+  <!-- Firebase account access; the credit application stays hidden until the profile has loaded. -->
+  <section class="wrap" id="authGate" style="padding-top:52px;padding-bottom:60px;">
+    <div class="card" style="max-width:460px;margin:0 auto;padding:28px;">
+      <div class="eyebrow">KamL Credit account</div>
+      <h2 id="authTitle" style="margin-top:8px;">Log in</h2>
+      <p class="muted" style="margin-top:8px;">Your information will be saved to your account and restored when you log in again.</p>
+      <p id="authStatus" class="small muted" role="status" style="margin-top:14px;">Checking your sign-in…</p>
+      <form id="authForm" style="display:none;margin-top:20px;" novalidate>
+        <div class="field" style="margin-bottom:14px;">
+          <label for="authEmail">Email address</label>
+          <input id="authEmail" type="email" autocomplete="email" required style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);">
+        </div>
+        <div class="field" style="margin-bottom:14px;">
+          <label for="authPassword">Password</label>
+          <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);">
+        </div>
+        <div class="field" id="authConfirmWrap" style="display:none;margin-bottom:14px;">
+          <label for="authConfirm">Confirm password</label>
+          <input id="authConfirm" type="password" autocomplete="new-password" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);">
+        </div>
+        <p id="authError" class="small" role="alert" style="color:var(--critical);margin-bottom:12px;"></p>
+        <button class="btn" id="authSubmit" type="submit" style="width:100%;">Log in</button>
+        <p class="small" style="text-align:center;margin-top:16px;">
+          <span id="authSwitchLabel">Don't have an account?</span>
+          <button type="button" id="authSwitch" style="border:0;background:none;color:var(--accent-ink);text-decoration:underline;cursor:pointer;padding:4px;">Create an account</button>
+        </p>
+      </form>
+      <button class="btn ghost sm" type="button" id="authRetry" style="display:none;margin-top:16px;">Retry loading profile</button>
+      <p class="small muted" style="margin-top:18px;">Demo platform — use fictional financial information for testing.</p>
+    </div>
+  </section>
+
+  <main class="wrap" id="appMain" style="display:none">
     <!-- STEP 1 -->
     <section class="panel active" id="panel-1">
       <div class="section-head">
@@ -144,8 +179,22 @@
   <script src="js/risk.js"></script>
   <script src="js/lenders.js"></script>
   <script src="js/transactions.js"></script>
-  <script src="js/app.js"></script>
-  <script src="js/survey.js"></script>
-  <script src="js/voice.js"></script>
+  <!-- Authentication loads app.js; accessibility scripts must run afterwards. -->
+  <script type="module">
+    try {
+      await import("./js/auth.js");
+      // The first-run accessibility survey must not cover the login screen.
+      await new Promise(resolve => {
+        if (window.KamLApp && window.KamLApp.authReady) return resolve();
+        window.addEventListener("kaml:authenticated", resolve, { once: true });
+      });
+      await import("./js/survey.js");
+      await import("./js/voice.js");
+    } catch (error) {
+      const status = document.getElementById("authStatus");
+      if (status) status.textContent = "Unable to load Firebase. Check your internet connection and browser console.";
+      console.error("KamL account initialization failed:", error);
+    }
+  </script>
 </body>
 </html>

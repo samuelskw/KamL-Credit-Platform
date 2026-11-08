@@ -132,9 +132,28 @@
     if (/^(repeat|say again|say that again|again|pardon|what|sorry|come again|repeat that|repeat please)$/.test(t)) return "repeat";
     if (/^(evaluate|submit|calculate|finish|done|i'm done|im done|get my score|show my score|check my score|evaluate credit)$/.test(t)) return "evaluate";
     if (/^(start over|start again|restart|from the start|from the beginning|begin again)$/.test(t)) return "restart";
-    var m = /^(go to|change|edit|jump to)\s+(.+)$/.exec(t);
+    var m = /^(go to|jump to)\s+(.+)$/.exec(t);
     if (m) return { go: m[2] };
-    return null;
+    return changeCommand(text);
+  }
+
+  // "change it to 40", "set it to retired", "change age to 40", "make it 2000", "change to self employed".
+  // Returns {set: value} for the current field, {go: field, set: value} for a named field,
+  // or {go: field, loose: true} for "change age" (which may also be "change 40").
+  function changeCommand(text) {
+    var raw = String(text).trim().replace(/[.!?]+$/, ""); // keep case: a business name is an answer too
+    var m = /^(?:change|edit|update|set|make|put|correct)\s+(.+)$/i.exec(raw);
+    if (!m) return null;
+    var rest = m[1];
+    var THIS = /^(?:it|this|that|this one|that one|the value|the answer|my answer|value|answer)\b\s*/i;
+    var hadThis = THIS.test(rest);
+    rest = rest.replace(THIS, "");
+    var to = /^(?:to|as|into|for)\s+(.+)$/i.exec(rest);
+    if (to) return { set: to[1] };                          // "change (it) to X"
+    if (hadThis) return rest ? { set: rest } : { again: true }; // "make it X" / "change it"
+    var named = /^(.+?)\s+(?:to|as)\s+(.+)$/i.exec(rest);
+    if (named) return { go: named[1], set: named[2] };     // "change age to 40"
+    return { go: rest, loose: true };                      // "change age" (or "change 40")
   }
 
   // ==================================================================
@@ -345,8 +364,14 @@
       case "text": q = item.label + "?"; break;
       default: q = item.label + unitPhrase(item) + "?";
     }
-    var cur = item.kind === "type" ? "" : currentDisplay(item);
-    if (cur && item.kind !== "type") q += " Currently " + cur + ".";
+    // Say the current answer straight after the question name, before any option list,
+    // and say clearly when there isn't one yet.
+    if (item.kind !== "type") {
+      var cur = currentDisplay(item);
+      var ans = cur ? " Your answer: " + cur + "." : " No answer yet.";
+      var cut = q.indexOf(". Choose from:") >= 0 ? q.indexOf(". Choose from:") + 1 : q.indexOf(". Say any of:") >= 0 ? q.indexOf(". Say any of:") + 1 : -1;
+      q = cut > 0 ? q.slice(0, cut) + ans + q.slice(cut) : q + ans;
+    }
     if (item.required) q += " This one is required.";
     return q;
   }
@@ -421,15 +446,49 @@
     sayThenListen((prefix || "") + "That was the last question. Say evaluate to get your credit score, previous to go back, start over, or cancel.");
   }
 
-  function goToField(name) {
+  function findField(name) {
     var target = words(name);
     var best = -1, score = 0;
     V.queue.forEach(function (it, i) {
       var s = words(it.label).filter(function (w) { return target.indexOf(w) >= 0; }).length;
       if (s > score) { score = s; best = i; }
     });
+    return best;
+  }
+  function goToField(name) {
+    var best = findField(name);
     if (best < 0) return sayThenListen("I couldn't find a question called " + name + ". Try saying go to, then part of the question, like go to monthly income.");
     ask(best);
+  }
+
+  // Apply a spoken answer to question i, then move on (shared by plain answers and "change … to …").
+  function answer(i, alts) {
+    var item = V.queue[i];
+    var r = applyAnswer(item, alts);
+    if (!r.ok) {
+      if (i !== V.idx) ask(i, r.msg + " "); // changing another question: go there so they can retry
+      else { showResult(r.msg, "bad"); sayThenListen(r.msg); }
+      return;
+    }
+    V.idx = i;
+    var done = "✓ " + item.label + ": " + r.display;
+    var got = "Got it, " + item.label.replace(/[?.!]\s*$/, "") + ": " + r.display + ". ";
+    if (i + 1 >= V.queue.length) end(got); else ask(i + 1, got);
+    showResult(done, "good");
+  }
+
+  // "change …" in step 1.
+  function changeForm(cmd) {
+    if (cmd.again) return V.phase === "ask" ? ask(V.idx, "Sure. ") : sayThenListen("Move to a question first, then say change it to, and the new answer.");
+    if (cmd.go) {
+      var i = findField(cmd.go);
+      if (i >= 0) return cmd.set !== undefined ? answer(i, [cmd.set]) : ask(i);
+      // "change 40" / "change the value to 40" while on a question: it's an answer for this question
+      if (V.phase === "ask") return answer(V.idx, [cmd.set !== undefined ? cmd.set : cmd.go]);
+      return sayThenListen("I couldn't find a question called " + cmd.go + ". Say change it to, and the new answer, or go to and part of a question.");
+    }
+    if (V.phase !== "ask") return sayThenListen("Move to a question first, then say change it to, and the new answer.");
+    answer(V.idx, [cmd.set]);
   }
 
   // Apply an answer for the current item. Returns {ok, display} or {ok:false, msg}.
@@ -506,18 +565,12 @@
     if (cmd === "repeat") return V.phase === "end" ? end() : ask(V.idx);
     if (cmd === "restart") return ask(0);
     if (cmd === "evaluate") return doEvaluate();
+    if (cmd && (cmd.set !== undefined || cmd.again || cmd.loose)) return changeForm(cmd);
     if (cmd && cmd.go) return goToField(cmd.go);
     if (V.phase === "end") return sayThenListen("Sorry, I didn't understand. Say evaluate, previous, start over, or cancel.");
-
-    var item = V.queue[V.idx];
-    var r = applyAnswer(item, alts);
-    if (!r.ok) { showResult(r.msg, "bad"); return sayThenListen(r.msg); }
     // Answer accepted: move straight on so the next thing the user says belongs to the next question.
     // (Saying "previous" goes back to change it.)
-    var done = "✓ " + item.label + ": " + r.display;
-    var got = "Got it, " + r.display + ". ";
-    if (V.idx + 1 >= V.queue.length) end(got); else ask(V.idx + 1, got);
-    showResult(done, "good");
+    answer(V.idx, alts);
   }
 
   function doEvaluate() {
@@ -615,6 +668,15 @@
 
     // Keyboard focus is on a control: "press" activates it; an answer fills it.
     var fe = focused();
+    // "change it to 20000" / "change the amount to 20000" / "set term to five years"
+    if (cmd && typeof cmd === "object" && (cmd.set !== undefined || cmd.loose || cmd.again)) {
+      if (cmd.again) return fe ? say(describe(fe).text + " Say the new value.") : sayThenListen("Say change, the setting, to, and the new value. For example, change the amount to 20000.");
+      var val = cmd.set !== undefined ? cmd.set : cmd.go;
+      if (fe && !cmd.go && applyToFocused(fe, [val])) return;
+      if (fe && cmd.loose && applyToFocused(fe, [val])) return;
+      text = ((cmd.go && !cmd.loose) ? cmd.go + " " : "") + val; // fall through to the step's own parsing ("amount 20000")
+      c = clean(text); alts = [text]; cmd = null;
+    }
     if (fe && !cmd) {
       if (PRESS.test(c)) return activate(fe);
       if (applyToFocused(fe, alts)) return;

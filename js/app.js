@@ -136,7 +136,7 @@
     $("#logoutBtn").style.display = (visible || authUser) ? "inline-block" : "none";
     $("#logoutBtn").textContent = guestActive ? "Sign in" : "Log out";
     $(".privacy").textContent = guestActive
-      ? "Guest: saved on this browser, not in Firebase"
+      ? "Guest mode"
       : "🔒 Your account profile is stored in Firebase";
   }
 
@@ -265,7 +265,7 @@
       if (guestActive) {
         // Local-only guest profile: do not call KamLAuth.save / Firestore.
         localStorage.setItem(GUEST_PROFILE_KEY, JSON.stringify(data));
-        if (guestActive && revision === saveRevision) saveStatus("Saved on this browser ✓");
+        if (guestActive && revision === saveRevision) saveStatus("Saved ✓");
       } else {
         await window.KamLAuth.save(data);
         if (authUser && authUser.uid === userId && revision === saveRevision) saveStatus("Saved ✓");
@@ -287,7 +287,7 @@
     profileLoading = false;
     setAppVisible(true);
     $("#authUserEmail").textContent = "Guest";
-    saveStatus("Guest data saves on this browser only");
+    saveStatus("Ready");
     window.KamLApp.authReady = true;
     window.dispatchEvent(new CustomEvent("kaml:authenticated"));
   }

@@ -267,6 +267,8 @@
       b.disabled = n > state.maxStep;
     });
     window.scrollTo(0, 0);
+    state.step = step;
+    window.dispatchEvent(new CustomEvent("kaml:step", { detail: { step: step } }));
   }
 
   // ------------------------------------------------------------------
@@ -746,5 +748,11 @@
   renderPersonas();
   renderForm();
   bind();
-  window.KamLApp = { state: state, evaluate: evaluate }; // handy for debugging / tests
+  // Public hooks (used by voice.js and tests)
+  window.KamLApp = {
+    state: state, evaluate: evaluate, go: go, setType: setType,
+    allFields: function () { return allFields(state.type); },
+    checkNumber: checkNumber, setErr: setErr, limitFor: limitFor,
+    productsFor: productsFor, termOptions: termOptions, fmtTerm: fmtTerm
+  };
 })();

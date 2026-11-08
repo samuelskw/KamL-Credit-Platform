@@ -631,16 +631,33 @@
   // ------------------------------------------------------------------
   // Navigation
   // ------------------------------------------------------------------
-  function go(step) {
-    step = +step;
-    if (step > state.maxStep) return;
-    $$(".panel").forEach(function (p) { p.classList.toggle("active", p.id === "panel-" + step); });
+  function updateStepButtons(step) {
     $$(".step-btn").forEach(function (b) {
       var n = +b.dataset.step;
       b.classList.toggle("active", n === step);
       b.classList.toggle("done", n < step);
       b.disabled = n > state.maxStep;
     });
+  }
+
+  // Any change to the input data makes steps 2–4 out of date: close them
+  // until the user evaluates again, so stale scores/offers are never shown
+  // (or saved as "evaluated" and rebuilt from unvalidated data on reload).
+  function invalidateResults() {
+    if (state.maxStep === 1 && !state.result) return;
+    state.maxStep = 1;
+    state.result = null;
+    state.risk = null;
+    state.chosen = null;
+    state.lastOffers = null;
+    updateStepButtons(state.step || 1);
+  }
+
+  function go(step) {
+    step = +step;
+    if (step > state.maxStep) return;
+    $$(".panel").forEach(function (p) { p.classList.toggle("active", p.id === "panel-" + step); });
+    updateStepButtons(step);
     window.scrollTo(0, 0);
     state.step = step;
     scheduleSave();
@@ -923,7 +940,7 @@
       $("#offers").innerHTML = '<div class="card empty"><h3>No lenders can offer this loan right now</h3><p style="margin-top:6px">Try a smaller amount or longer term in Step 3, or follow the tips in Step 2 to raise your score. Reasons are listed below.</p></div>';
     } else {
       $("#offers").innerHTML = list.map(function (x, i) {
-        var dsrTxt = state.type === "individual" ? pct(x.dsr) + " of income" : x.dsr.toFixed(2) + "× DSCR";
+        var dsrTxt = x.dsr === null ? "No income recorded" : state.type === "individual" ? pct(x.dsr) + " of income" : x.dsr.toFixed(2) + "× DSCR";
         return '<div class="offer' + (x.apr === minApr ? " best" : "") + (state.chosen === x.lender.id ? " best" : "") + '">' +
           '<div><div class="name">' + esc(x.lender.name) + (x.apr === minApr ? '<span class="flag">Lowest APR</span>' : "") + (state.chosen === x.lender.id ? '<span class="flag">Selected</span>' : "") + "</div>" +
           '<div class="kind">' + esc(x.lender.kind) + '</div><div class="perks">' + esc(x.lender.perks.join(" · ")) + "</div></div>" +
@@ -970,26 +987,31 @@
       var a = T.analyse(text);
       var d = readForm();
       var spendTotal = K.spendTotal(a.spending);
+      // Only overwrite fields the statement actually provides evidence for;
+      // otherwise keep what the user typed (null = not detectable from this file).
       if (state.type === "individual") {
         d.spending = a.spending;
         d.monthlyIncome = a.monthlyIncome || d.monthlyIncome;
-        d.incomeVariability = a.incomeVariability;
-        d.overdraftDaysPerMonth = a.overdraftDaysPerMonth;
+        if (a.incomeVariability !== null) d.incomeVariability = a.incomeVariability;
+        if (a.overdraftDaysPerMonth !== null) d.overdraftDaysPerMonth = a.overdraftDaysPerMonth;
       } else {
         var disc = ["dining", "shopping", "entertainment", "travel", "gambling"].reduce(function (s, k) { return s + a.spending[k]; }, 0);
         d.annualRevenue = a.monthlyIncome * 12 || d.annualRevenue;
         d.annualOperatingExpenses = spendTotal * 12 || d.annualOperatingExpenses;
-        d.discretionaryExpenseShare = spendTotal ? Math.round((disc / spendTotal) * 100) : 0;
-        d.overdraftDaysPerMonth = a.overdraftDaysPerMonth;
+        if (spendTotal) d.discretionaryExpenseShare = Math.round((disc / spendTotal) * 100);
+        if (a.overdraftDaysPerMonth !== null) d.overdraftDaysPerMonth = a.overdraftDaysPerMonth;
       }
       state.data[state.type] = d;
       writeForm(d);
-      state.csvApplied = a.transactions + " transactions over " + a.months + " month" + (a.months > 1 ? "s" : "");
+      invalidateResults();
+      state.csvApplied = a.transactions + " transactions over " + a.months + " month" + (a.months === 1 ? "" : "s");
       var top = Object.keys(a.spending).filter(function (k) { return a.spending[k] > 0; }).sort(function (x, y) { return a.spending[y] - a.spending[x]; }).slice(0, 4);
       scheduleSave();
       out.innerHTML = '<div class="alert" style="background:var(--good-soft)"><b>' + esc(name) + "</b>: analysed " + state.csvApplied + ".<br>Avg. income " + money(a.monthlyIncome) +
-        "/mo (" + a.incomeVariability + "), spending " + money(spendTotal) + "/mo. Top: " + top.map(function (k) { return k + " " + money(a.spending[k]); }).join(", ") +
-        (a.overdraftDaysPerMonth ? ". Overdrawn ~" + a.overdraftDaysPerMonth + " days/mo." : ".") + "<br>The form has been updated.</div>";
+        "/mo (" + (a.incomeVariability || "regularity not detectable") + "), spending " + money(spendTotal) + "/mo. Top: " + top.map(function (k) { return k + " " + money(a.spending[k]); }).join(", ") +
+        (a.overdraftDaysPerMonth ? ". Overdrawn ~" + a.overdraftDaysPerMonth + " days/mo." : ".") +
+        (a.overdraftDaysPerMonth === null ? "<br>No balance column, so your overdraft answer was kept." : "") +
+        "<br>The form has been updated.</div>";
     } catch (e) {
       out.innerHTML = '<div class="alert critical">' + esc(e.message) + "</div>";
     }
@@ -998,12 +1020,20 @@
   // ------------------------------------------------------------------
   // Evaluate
   // ------------------------------------------------------------------
+  // People in work must report an income; others may genuinely have none.
+  var INCOME_REQUIRED = { "full-time": true, "part-time": true, "self-employed": true };
+  function incomeOptional(f) {
+    if (!f || f.id !== "monthlyIncome" || state.type !== "individual") return false;
+    var status = $("#f_employmentStatus");
+    return !!status && !INCOME_REQUIRED[status.value];
+  }
+
   function evaluate() {
     // Field-level number checks first: flag every bad field inline.
     var bad = [];
     $$("#form [data-num]").forEach(function (el) {
       var f = allFields(state.type).filter(function (x) { return "f_" + x.id === el.id; })[0];
-      var msg = checkNumber(el, !!(f && f.required));
+      var msg = checkNumber(el, !!(f && f.required) && !incomeOptional(f));
       setErr(el, msg);
       if (msg) bad.push(el);
     });
@@ -1016,7 +1046,11 @@
     var d = readForm(), err = [];
     state.data[state.type] = d;
     if (state.type === "individual") {
-      if (!(d.monthlyIncome >= 0) && d.employmentStatus !== "unemployed") err.push("Enter a valid monthly income.");
+      var income = d.monthlyIncome === "" ? 0 : d.monthlyIncome;
+      if (!(income >= 0)) err.push("Enter a valid monthly income.");
+      else if (income === 0 && INCOME_REQUIRED[d.employmentStatus]) {
+        err.push("Enter your monthly income — it can only be £0 if you're unemployed, a student or retired.");
+      }
       if (d.age === "" || !Number.isFinite(Number(d.age)) || Number(d.age) < 18) {
         err.push("You must enter a valid age of 18 or over to apply for credit.");
       }
@@ -1047,7 +1081,7 @@
     state.csvApplied = null;
     $("#csvResult").innerHTML = "";
     $$("#typeSeg button").forEach(function (b) { b.classList.toggle("on", b.dataset.type === t); });
-    state.maxStep = 1;
+    invalidateResults();
     renderForm();
     go(1);
     scheduleSave();
@@ -1057,8 +1091,8 @@
     // Live filter on every numeric field (form + loan inputs): only digits / one decimal point survive.
     document.addEventListener("input", function (e) { if (e.target.dataset && e.target.dataset.num) sanitizeNumber(e.target); });
     // Save form changes, including text fields, checkboxes and spending.
-    $("#form").addEventListener("input", scheduleSave);
-    $("#form").addEventListener("change", scheduleSave);
+    $("#form").addEventListener("input", function () { invalidateResults(); scheduleSave(); });
+    $("#form").addEventListener("change", function () { invalidateResults(); scheduleSave(); });
     document.addEventListener("focusout", function (e) {
       var el = e.target;
       if (el.dataset && el.dataset.num && el.closest("#form")) setErr(el, checkNumber(el, false));
@@ -1071,9 +1105,10 @@
       state.data[p.type] = JSON.parse(JSON.stringify(p.data));
       state.request[p.type] = Object.assign({}, p.request);
       writeForm(state.data[p.type]);
+      invalidateResults();
       scheduleSave();
     });
-    $("#resetBtn").addEventListener("click", function () { state.data[state.type] = {}; writeForm({}); $("#csvResult").innerHTML = ""; state.csvApplied = null; scheduleSave(); });
+    $("#resetBtn").addEventListener("click", function () { state.data[state.type] = {}; writeForm({}); $("#csvResult").innerHTML = ""; state.csvApplied = null; invalidateResults(); scheduleSave(); });
     $("#evalBtn").addEventListener("click", evaluate);
     $("#steps").addEventListener("click", function (e) { var b = e.target.closest(".step-btn"); if (b && !b.disabled) go(b.dataset.step); });
     document.addEventListener("click", function (e) {

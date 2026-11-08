@@ -193,10 +193,21 @@
   <script src="js/lenders.js"></script>
   <script src="js/transactions.js"></script>
   <script src="js/display.js"></script>
-  <!-- Authentication loads app.js; accessibility scripts must run afterwards. -->
+  <!-- Auth (Firebase) loads first but is optional; app.js always loads; accessibility scripts run afterwards. -->
   <script type="module">
     try {
-      await import("./js/auth.js");
+      try {
+        await import("./js/auth.js");
+      } catch (authError) {
+        // Firebase unreachable (offline, blocked CDN…): keep the app usable in guest mode.
+        console.error("Firebase could not be loaded; guest mode only:", authError);
+        window.KamLAuth = {
+          available: () => false,
+          setupMessage: "Online accounts are unavailable right now (couldn't reach the sign-in service). You can still continue as a guest — your data stays in this browser.",
+          email: () => null
+        };
+      }
+      await import("./js/app.js");
       // The first-run accessibility survey must not cover the login screen.
       await new Promise(resolve => {
         if (window.KamLApp && window.KamLApp.authReady) return resolve();
@@ -206,7 +217,7 @@
       await import("./js/voice.js");
     } catch (error) {
       const status = document.getElementById("authStatus");
-      if (status) status.textContent = "Unable to load Firebase. Check your internet connection and browser console.";
+      if (status) status.textContent = "Unable to start the app. Check your internet connection and browser console.";
       console.error("KamL account initialization failed:", error);
     }
   </script>

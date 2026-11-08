@@ -28,21 +28,54 @@
   ];
   var CATS = ["housing", "utilities", "groceries", "transport", "insurance", "dining", "shopping", "entertainment", "travel", "gambling", "other"];
 
-  function splitLine(line) {
+  function splitLine(line, delim) {
     var out = [], cur = "", q = false;
     for (var i = 0; i < line.length; i++) {
-      var c = line[i];
-      if (c === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
-      else if (c === "," && !q) { out.push(cur); cur = ""; }
+      var c = line.charAt(i);
+      if (c === '"') { if (q && line.charAt(i + 1) === '"') { cur += '"'; i++; } else q = !q; }
+      else if (c === delim && !q) { out.push(cur); cur = ""; }
       else cur += c;
     }
     out.push(cur);
     return out.map(function (s) { return s.trim(); });
   }
 
+  // Pick the separator used by the header row (UK banks: comma; many EU exports: semicolon; some: tab).
+  function detectDelimiter(header) {
+    var best = ",", bestCount = 0;
+    [",", ";", "\t"].forEach(function (d) {
+      var n = splitLine(header, d).length - 1;
+      if (n > bestCount) { best = d; bestCount = n; }
+    });
+    return best;
+  }
+
+  // "£1,234.56" -> 1234.56, "(12.00)" -> -12, "-£50" -> -50, "12.00 DR" -> -12, "" / "abc" -> NaN
+  function parseMoney(s) {
+    if (s === undefined || s === null) return NaN;
+    var t = String(s).trim();
+    if (!t) return NaN;
+    var neg = false;
+    if (/^\(.*\)$/.test(t)) { neg = true; t = t.slice(1, -1); }
+    if (/\s*DR$/i.test(t)) { neg = true; t = t.replace(/\s*DR$/i, ""); }
+    t = t.replace(/\s*CR$/i, "").replace(/[£$€\s,]/g, "");
+    if (/^-/.test(t) || /-$/.test(t)) { neg = !neg; t = t.replace(/^-|-$/g, ""); }
+    if (!/^\d*\.?\d+$/.test(t)) return NaN;
+    var n = parseFloat(t);
+    return neg ? -n : n;
+  }
+
   function parseDate(s) {
+    if (!s) return null;
     var m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/.exec(s); // dd/mm/yyyy
-    if (m) return new Date(+(m[3].length === 2 ? "20" + m[3] : m[3]), +m[2] - 1, +m[1]);
+    if (m) {
+      var y = +(m[3].length === 2 ? "20" + m[3] : m[3]), mo = +m[2] - 1, day = +m[1];
+      var dt = new Date(y, mo, day);
+      // reject impossible dates such as 31/02 instead of rolling them into the next month
+      return dt.getFullYear() === y && dt.getMonth() === mo && dt.getDate() === day ? dt : null;
+    }
+    var iso = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s); // yyyy-mm-dd: build in local time (new Date() would use UTC)
+    if (iso) return parseDate(iso[3] + "/" + iso[2] + "/" + iso[1]);
     var d = new Date(s);
     return isNaN(d) ? null : d;
   }
@@ -56,44 +89,87 @@
     return "other";
   }
 
-  function analyse(text) {
-    var lines = text.split(/\r?\n/).filter(function (l) { return l.trim(); });
-    if (lines.length < 2) throw new Error("The file has no transactions.");
-    var head = splitLine(lines[0]).map(function (h) { return h.toLowerCase(); });
-    function col(re) { for (var i = 0; i < head.length; i++) if (re.test(head[i])) return i; return -1; }
-    var iDate = col(/date/), iDesc = col(/desc|narrative|details|merchant|payee/), iAmt = col(/amount|value/),
-      iCat = col(/categ/), iBal = col(/balance/), iIn = col(/^(paid )?in$|credit/), iOut = col(/^(paid )?out$|debit/);
-    if (iDate < 0 || (iAmt < 0 && (iIn < 0 || iOut < 0))) throw new Error("Couldn't find date and amount columns. Expected headers: date, description, amount.");
+  var DAYS_PER_MONTH = 30.44;
+  var MIN_DAYS = 25; // shorter statements can't give a meaningful monthly average
 
-    var months = {}, spend = {}, income = {}, overdraftDays = {}, count = 0;
+  function analyse(text) {
+    var lines = String(text).replace(/^﻿/, "").split(/\r?\n/).filter(function (l) { return l.trim(); });
+    if (lines.length < 2) throw new Error("The file has no transactions.");
+    var delim = detectDelimiter(lines[0]);
+    var head = splitLine(lines[0], delim).map(function (h) { return h.toLowerCase().replace(/^"|"$/g, ""); });
+    function col(re, not) { for (var i = 0; i < head.length; i++) if (re.test(head[i]) && !(not && not.test(head[i]))) return i; return -1; }
+    // Prefer a plain "amount" column; only fall back to "value" when it isn't a date ("Value Date").
+    var iAmt = col(/amount/);
+    if (iAmt < 0) iAmt = col(/value/, /date/);
+    var iDate = col(/^(transaction |posting |posted )?date$/);
+    if (iDate < 0) iDate = col(/date/);
+    var iDesc = col(/desc|narrative|details|merchant|payee|reference/),
+      iCat = col(/categ/), iBal = col(/balance/),
+      iIn = col(/^(paid |money )?in$|credit/, /card/), iOut = col(/^(paid |money )?out$|debit/, /card/);
+    if (iDate < 0 || (iAmt < 0 && (iIn < 0 || iOut < 0))) throw new Error("Couldn't find date and amount columns. Expected headers: date, description, amount (or paid in / paid out).");
+
+    var months = {}, spend = {}, income = {}, overdraftDays = {}, count = 0, skipped = 0, first = null, last = null;
     CATS.forEach(function (c) { spend[c] = 0; });
     for (var r = 1; r < lines.length; r++) {
-      var f = splitLine(lines[r]);
+      var f = splitLine(lines[r], delim);
       var d = parseDate(f[iDate]);
-      if (!d) continue;
-      var amt = iAmt >= 0 ? parseFloat(f[iAmt].replace(/[£$,]/g, "")) : (parseFloat(f[iIn] || 0) || 0) - (parseFloat(f[iOut] || 0) || 0);
-      if (!isFinite(amt)) continue;
+      if (!d) { skipped++; continue; }
+      var amt;
+      if (iAmt >= 0) amt = parseMoney(f[iAmt]);
+      else {
+        var pin = parseMoney(f[iIn]), pout = parseMoney(f[iOut]);
+        // Paid-out values may be written positive or negative; treat both as money out.
+        amt = isNaN(pin) && isNaN(pout) ? NaN : (isNaN(pin) ? 0 : Math.abs(pin)) - (isNaN(pout) ? 0 : Math.abs(pout));
+      }
+      if (!isFinite(amt)) { skipped++; continue; } // truncated / totals / malformed rows
       var key = d.getFullYear() + "-" + (d.getMonth() + 1);
       months[key] = true;
       count++;
+      if (!first || d < first) first = d;
+      if (!last || d > last) last = d;
       if (amt > 0) income[key] = (income[key] || 0) + amt;
       else spend[categorise(f[iDesc] || "", iCat >= 0 ? f[iCat] : "")] += -amt;
-      if (iBal >= 0 && parseFloat(f[iBal]) < 0) overdraftDays[d.toDateString()] = true;
+      if (iBal >= 0 && parseMoney(f[iBal]) < 0) overdraftDays[d.toDateString()] = true;
     }
-    var n = Object.keys(months).length || 1;
+    if (!count) throw new Error("No readable transactions found" + (skipped ? " (" + skipped + " rows had an unreadable date or amount)" : "") + ". Check the dates are dd/mm/yyyy and amounts are numbers.");
+
+    // Average over the days actually covered, so partial first/last months don't skew "per month" figures.
+    var spanDays = Math.round((last - first) / 86400000) + 1;
+    if (spanDays < MIN_DAYS) throw new Error("This statement only covers " + spanDays + " day" + (spanDays === 1 ? "" : "s") + ". Upload at least a full month so monthly averages are meaningful.");
+    var n = spanDays / DAYS_PER_MONTH;
+    // Statements usually cover whole months but the last few days may have no transactions
+    // (e.g. 1 Jul – 28 Sep): snap to the whole month count when within ~4 days of it.
+    if (Math.abs(n - Math.round(n)) < 0.15) n = Math.round(n);
+
     var monthly = {};
     CATS.forEach(function (c) { monthly[c] = Math.round(spend[c] / n); });
-    var incomes = Object.keys(income).map(function (k) { return income[k]; });
-    var avgIncome = incomes.reduce(function (s, v) { return s + v; }, 0) / n;
-    var sd = Math.sqrt(incomes.reduce(function (s, v) { return s + Math.pow(v - avgIncome, 2); }, 0) / (incomes.length || 1));
-    var cv = avgIncome > 0 ? sd / avgIncome : 0;
+    var totalIncome = Object.keys(income).reduce(function (s, k) { return s + income[k]; }, 0);
+    var avgIncome = totalIncome / n;
+
+    // Income regularity: compare whole calendar months only (drop the partial first/last month
+    // when there are enough), and only when at least two months are left to compare.
+    var keys = Object.keys(months).sort(function (a, b) {
+      var pa = a.split("-"), pb = b.split("-");
+      return pa[0] - pb[0] || pa[1] - pb[1];
+    });
+    if (keys.length >= 4) keys = keys.slice(1, -1);
+    var variability = null;
+    if (keys.length >= 2 && totalIncome > 0) {
+      var vals = keys.map(function (k) { return income[k] || 0; });
+      var mean = vals.reduce(function (s, v) { return s + v; }, 0) / vals.length;
+      var sd = Math.sqrt(vals.reduce(function (s, v) { return s + Math.pow(v - mean, 2); }, 0) / vals.length);
+      var cv = mean > 0 ? sd / mean : 0;
+      variability = cv < 0.1 ? "stable" : cv < 0.3 ? "some" : "high";
+    }
+
     return {
       transactions: count,
-      months: n,
+      skipped: skipped,
+      months: Math.round(n * 10) / 10,
       spending: monthly,
       monthlyIncome: Math.round(avgIncome),
-      incomeVariability: cv < 0.1 ? "stable" : cv < 0.3 ? "some" : "high",
-      overdraftDaysPerMonth: Math.round(Object.keys(overdraftDays).length / n)
+      incomeVariability: variability,                       // null = can't tell from this file
+      overdraftDaysPerMonth: iBal >= 0 ? Math.min(31, Math.round(Object.keys(overdraftDays).length / n)) : null // null = no balance column
     };
   }
 
@@ -120,7 +196,7 @@
     return rows.map(function (r) { return r.join(","); }).join("\n");
   }
 
-  KamL.transactions = { analyse: analyse, sampleCSV: sampleCSV, CATEGORIES: CATS };
+  KamL.transactions = { analyse: analyse, sampleCSV: sampleCSV, parseMoney: parseMoney, CATEGORIES: CATS };
 
   // ---------------- demo personas ----------------
   KamL.PERSONAS = {

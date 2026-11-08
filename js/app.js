@@ -132,8 +132,30 @@
     return value && typeof value === "object" && !Array.isArray(value);
   }
 
+  // Display settings live alongside the financial profile in Firestore.
+  // Use explicit defaults for accounts created before preferences were saved,
+  // so a different account's browser-local choices do not carry across.
+  function applyAccountPreferences(saved) {
+    var display = isRecord(saved) && isRecord(saved.display) ? saved.display : {};
+    if (K.display) {
+      K.display.set({
+        scale: display.scale === undefined ? 1 : display.scale,
+        cvd: display.cvd === undefined ? "none" : display.cvd
+      });
+    }
+    var theme = isRecord(saved) ? saved.theme : null;
+    if (theme === "light" || theme === "dark") {
+      document.documentElement.dataset.theme = theme;
+      try { localStorage.setItem("kaml-theme", theme); } catch (err) {}
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+      try { localStorage.removeItem("kaml-theme"); } catch (err) {}
+    }
+  }
+
   function applySavedProfile(profile) {
     resetProfile();
+    applyAccountPreferences(isRecord(profile) ? profile.preferences : null);
     if (!isRecord(profile)) return;
     state.type = profile.type === "business" ? "business" : "individual";
     if (isRecord(profile.data)) {
@@ -188,7 +210,11 @@
       chosen: state.chosen,
       csvApplied: state.csvApplied || null,
       evaluated: state.maxStep >= 4 && !!state.result,
-      step: state.step || 1
+      step: state.step || 1,
+      preferences: {
+        display: K.display ? K.display.get() : { scale: 1, cvd: "none" },
+        theme: document.documentElement.dataset.theme || "system"
+      }
     };
   }
 
@@ -996,12 +1022,17 @@
     });
     $("#useSampleCsv").addEventListener("click", function (e) { e.preventDefault(); applyCSV(T.sampleCSV(), "sample-statement.csv"); });
 
+    // Display preferences change independently of the financial form.
+    // Reuse the existing debounced, per-user Firestore profile save.
+    window.addEventListener("kaml:display", scheduleSave);
+
     // theme
     $("#themeBtn").addEventListener("click", function () {
       var root = document.documentElement;
       var dark = root.dataset.theme ? root.dataset.theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
       root.dataset.theme = dark ? "light" : "dark";
       try { localStorage.setItem("kaml-theme", root.dataset.theme); } catch (err) {}
+      scheduleSave();
     });
     try { var th = localStorage.getItem("kaml-theme"); if (th) document.documentElement.dataset.theme = th; } catch (err) {}
   }

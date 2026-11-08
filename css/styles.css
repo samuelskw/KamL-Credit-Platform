@@ -125,7 +125,9 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 
 .upload { border: 1.5px dashed var(--border); border-radius: 12px; padding: 16px; text-align: center; background: var(--surface-2); }
 .upload.drag { border-color: var(--accent); background: var(--accent-soft); }
-.upload input { display: none; }
+.upload { position: relative; }
+.upload input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; } /* hidden but still reachable by keyboard */
+.upload:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
 .upload-result { margin-top: 10px; font-size: calc(13px * var(--fs, 1)); text-align: left; }
 
 /* data used list */
@@ -427,3 +429,7 @@ body.has-voice main { padding-bottom: 340px; }
 /* Voice assistant: headphones (full-duplex) toggle */
 .vd-hp { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: calc(12.5px * var(--fs, 1)); color: var(--text-2); cursor: pointer; }
 .vd-hp input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* Keyboard navigation with the voice assistant: show where focus is */
+[data-toggle]:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+body.has-voice [tabindex="-1"]:focus { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 6px; }

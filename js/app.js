@@ -709,7 +709,7 @@
     $("#factors").innerHTML = res.factors.map(function (f, i) {
       var status = f.score >= 70 ? "good" : f.score >= 50 ? "warning" : f.score >= 30 ? "serious" : "critical";
       return '<div class="factor' + (i < 2 || f.score < 50 ? " open" : "") + '">' +
-        '<div class="factor-head" data-toggle><h4><span class="chev">▸</span>' + esc(f.name) + ' <span class="badge ' + status + '">' + f.rating + "</span>" +
+        '<div class="factor-head" data-toggle tabindex="0" role="button" aria-expanded="' + (i < 2 || f.score < 50 ? "true" : "false") + '"><h4><span class="chev">▸</span>' + esc(f.name) + ' <span class="badge ' + status + '">' + f.rating + "</span>" +
         '<span class="small muted" style="font-weight:500">' + Math.round(f.weight * 100) + "% of score</span></h4>" +
         '<div class="pts"><b>' + f.points + "</b> / " + f.maxPoints + " pts</div>" +
         '<div class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + f.score + '" aria-label="' + esc(f.name) + '"><i style="width:' + f.score + '%"></i></div></div>' +
@@ -1063,16 +1063,21 @@
     $("#steps").addEventListener("click", function (e) { var b = e.target.closest(".step-btn"); if (b && !b.disabled) go(b.dataset.step); });
     document.addEventListener("click", function (e) {
       var g = e.target.closest("[data-goto]"); if (g) go(g.dataset.goto);
-      var t = e.target.closest("[data-toggle]"); if (t) t.parentNode.classList.toggle("open");
+      var t = e.target.closest("[data-toggle]");
+      if (t) { t.parentNode.classList.toggle("open"); t.setAttribute("aria-expanded", t.parentNode.classList.contains("open") ? "true" : "false"); }
       var c = e.target.closest("[data-choose]"); if (c) openOffer(c.dataset.choose);
       if (e.target.closest("[data-close]") || e.target.id === "modal") $("#modal").classList.remove("on");
       var cf = e.target.closest("[data-confirm]");
       if (cf) { state.chosen = cf.dataset.confirm; $("#modal").classList.remove("on"); renderOffers(); scheduleSave(); }
     });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") $("#modal").classList.remove("on"); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") $("#modal").classList.remove("on");
+      // Factor rows are div "buttons": activate with Enter or Space like a real button.
+      if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches("[data-toggle]")) { e.preventDefault(); e.target.click(); }
+    });
     $("#expandAll").addEventListener("click", function () {
       var all = $$(".factor"), open = all.every(function (f) { return f.classList.contains("open"); });
-      all.forEach(function (f) { f.classList.toggle("open", !open); });
+      all.forEach(function (f) { f.classList.toggle("open", !open); var h = f.querySelector("[data-toggle]"); if (h) h.setAttribute("aria-expanded", String(!open)); });
       this.textContent = open ? "Expand all" : "Collapse all";
     });
 

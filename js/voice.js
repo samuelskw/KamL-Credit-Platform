@@ -24,7 +24,8 @@
   var V = {
     on: false, speakOK: false, listenOK: false, rate: 1,
     step: 1, queue: [], idx: 0, phase: "ask", // ask | confirm | end | page | modal
-    session: 0, turn: 0, speaking: false, saying: "", prevSaying: "", spokeEndAt: 0, restarts: [], misses: 0, utts: [], rec: null, offerStart: 0, introDone: false, lastSaid: ""
+    session: 0, turn: 0, speaking: false, saying: "", prevSaying: "", spokeEndAt: 0, restarts: [], misses: 0, utts: [], rec: null, offerStart: 0, introDone: false, lastSaid: "",
+    kb: false, focusEl: null, selfFocus: false, navFocus: false, hinted: {}, modalLender: null
   };
 
   // ==================================================================
@@ -335,6 +336,7 @@
 
   function question(item) {
     var q;
+    item = Object.create(item, { label: { value: String(item.label).replace(/[?.!]\s*$/, "") } }); // no "income?."
     switch (item.kind) {
       case "type": q = "Are you applying as an individual, or for a business?"; break;
       case "select": q = item.label + ". Choose from: " + item.options.map(function (o) { return o[1]; }).join(", ") + "."; break;
@@ -363,7 +365,10 @@
     if (el) A.setErr(el, el.value ? A.checkNumber(el, false) : "");
   }
 
-  function ask(i, prefix) {
+  // opts.noFocus: keyboard focus is already on the field (the user tabbed there).
+  // opts.suffix: extra words read after the question (e.g. a keyboard hint).
+  function ask(i, prefix, opts) {
+    opts = opts || {};
     if (V.phase === "ask") refreshFieldError(V.queue[V.idx]);
     $$(".voice-focus").forEach(function (e) { e.classList.remove("voice-focus"); });
     V.idx = Math.max(0, Math.min(i, V.queue.length - 1));
@@ -372,13 +377,29 @@
     showHeard("");      // clear the previous question's transcript…
     showResult("", ""); // …and its result / error line
     highlight(item);
+    if (V.kb && !opts.noFocus) focusItem(item); // keep keyboard focus in step with the question
     setProgress("Question " + (V.idx + 1) + " of " + V.queue.length);
     var intro = "";
     if (!V.introDone) {
       V.introDone = true;
-      intro = "I'll ask you each question in turn. Answer out loud, or say skip, previous, or cancel at any time. ";
+      intro = "I'll ask you each question in turn. Answer out loud, or say skip, previous, or cancel at any time. " +
+        "You can also move with Tab or the up and down arrow keys, and press Enter or Space to select. ";
     }
-    sayThenListen((prefix || "") + intro + question(item));
+    var err = fieldError(item);
+    if (err && (prefix || "").indexOf(err) >= 0) err = "";
+    sayThenListen((prefix || "") + intro + (err ? "Error: " + err + " " : "") + question(item) + (opts.suffix || ""));
+  }
+
+  function itemEl(item) {
+    if (item.kind === "type") return $("#typeSeg button.on") || $("#typeSeg button");
+    if (item.kind === "checks") return $('[data-multi="' + item.key + '"]');
+    return fieldEl(item);
+  }
+  function focusItem(item) { selfFocus(itemEl(item)); }
+  function fieldError(item) {
+    var el = item && item.kind !== "type" ? fieldEl(item) : null;
+    var box = el && document.getElementById(el.id + "_err");
+    return box ? textOf(box) : "";
   }
 
   function next() {
@@ -395,6 +416,7 @@
     V.phase = "end";
     highlight(null);
     $("#evalBtn").closest(".card").classList.add("voice-focus");
+    if (V.kb) selfFocus($("#evalBtn"));
     setProgress("All questions done");
     sayThenListen((prefix || "") + "That was the last question. Say evaluate to get your credit score, previous to go back, start over, or cancel.");
   }
@@ -471,6 +493,14 @@
 
   function handleForm(alts, cmd) {
     if (cmd === "cancel") return cancel(true);
+    // Keyboard focus is on something that isn't a question (a button, link, heading…).
+    if (V.phase === "focus") {
+      var fe = focused() || V.focusEl;
+      if (cmd === "next" || cmd === "prev") return moveFocus(cmd === "next" ? 1 : -1);
+      if (cmd === "repeat") return fe ? say(describe(fe).text) : ask(V.idx);
+      if (!cmd && PRESS.test(clean(alts[0]))) return activate(fe);
+      if (!cmd) return say("You are on " + (fe ? describe(fe).text : "the page.") + " Say press to select it, next or previous to move, or go to and a question name.");
+    }
     if (cmd === "next") return V.phase === "end" ? sayThenListen("That was the last question. Say evaluate, previous, or cancel.") : next();
     if (cmd === "prev") return prev();
     if (cmd === "repeat") return V.phase === "end" ? end() : ask(V.idx);
@@ -571,18 +601,23 @@
 
     // Offer detail modal
     if (V.phase === "modal") {
-      if (/^(confirm|select|select it|select this|yes|choose it|i'll take it|take it|accept)/.test(c)) {
-        var btn = $("[data-confirm]"); var name = $("#modalBody h2").textContent;
-        if (btn) btn.click();
-        V.phase = "page";
-        return sayThenListen("You've selected " + name + ". This is an indicative quote. The lender will run its own checks before making a final offer. Say repeat to hear the offers again, previous, or cancel.");
+      // Clicking the dialog's buttons is announced by onClick(), the same as a keyboard press.
+      if (/^(confirm|select|select it|select this|yes|choose it|i'll take it|take it|accept|press|enter|ok|okay)/.test(c)) {
+        var btn = $("#modalBody [data-confirm]");
+        if (btn) return btn.click();
       }
       if (/^(back|no|close|go back|return|cancel)/.test(c)) {
-        var close = $("[data-close]"); if (close) close.click();
-        V.phase = "page";
-        return sayThenListen("Back to the offers. Say choose and an option number, repeat, or cancel.");
+        var close = $("#modalBody [data-close]");
+        if (close) return close.click();
       }
       return sayThenListen("Say confirm to select this offer, or back to return to the list.");
+    }
+
+    // Keyboard focus is on a control: "press" activates it; an answer fills it.
+    var fe = focused();
+    if (fe && !cmd) {
+      if (PRESS.test(c)) return activate(fe);
+      if (applyToFocused(fe, alts)) return;
     }
 
     if (step === 4 && /^(more|more offers|next offers|the rest|rest)$/.test(c)) return sayThenListen(offersText(V.offerStart + 4));
@@ -638,11 +673,7 @@
         var cards = offerCards();
         var pickC = cards[(num || 0) - 1];
         if (!pickC) return sayThenListen("Please say an option number between 1 and " + cards.length + ".");
-        $("[data-choose]", pickC.el).click();
-        V.phase = "modal";
-        var dl = $$("#modalBody dt").map(function (dt) { return dt.textContent + ": " + dt.nextElementSibling.textContent + "."; }).join(" ");
-        dl = dl.replace(/%/g, " percent").replace(/\bp\.a\.\.?/g, "a year.").replace(/(\d) yrs?\b/g, function (m, d) { return d + (d === "1" ? " year" : " years"); });
-        return sayThenListen("Option " + pickC.n + ", " + pickC.name + ". " + dl + " Say confirm to select this offer, or back to return to the list.");
+        return $("[data-choose]", pickC.el).click(); // onClick() reads the offer details
       }
     }
     sayThenListen("Sorry, I didn't understand that. Say repeat to hear the options again, next, previous, or cancel.");
@@ -658,9 +689,23 @@
     }
     el.dispatchEvent(new Event("change", { bubbles: true }));
     showResult("✓ " + msg, "good");
+    // Changing the loan type re-draws the form, so put keyboard focus back on the same control.
+    var again = document.getElementById(id);
+    if (V.kb && again && document.activeElement !== again && (V.focusEl === el || !document.contains(V.focusEl))) selfFocus(again);
+    sayThenListen(msg + rateLine() + " Say another change, next for loan offers, or cancel.");
+  }
+  function rateLine() {
     var rk = A.state.risk, req = A.state.request[A.state.type];
-    sayThenListen(msg + "The interest rate is now " + rk.rate.toFixed(2) + " percent, about " + money(K.risk.payment(req.amount, rk.rate, req.termMonths)) +
-      " a month. Say another change, next for loan offers, or cancel.");
+    return "The interest rate is now " + rk.rate.toFixed(2) + " percent, about " + money(K.risk.payment(req.amount, rk.rate, req.termMonths)) + " a month.";
+  }
+
+  function modalText() {
+    var name = textOf($("#modalBody h2"));
+    var c = offerCards().filter(function (x) { return x.name === name; })[0];
+    var dl = $$("#modalBody dt").map(function (dt) { return dt.textContent + ": " + dt.nextElementSibling.textContent + "."; }).join(" ");
+    dl = dl.replace(/%/g, " percent").replace(/\bp\.a\.\.?/g, "a year.").replace(/(\d) yrs?\b/g, function (m, d) { return d + (d === "1" ? " year" : " years"); });
+    return (c ? "Option " + c.n + ", " : "") + name + ". " + dl +
+      " Say confirm, or press Enter on Select this offer, to choose it. Say back, or press Escape, to return to the list.";
   }
 
   // ==================================================================
@@ -698,6 +743,10 @@
       V.queue = buildQueue();
       return ask(Math.min(V.idx, V.queue.length - 1), "Back to your answers. ");
     }
+    if (V.kb) { // move keyboard focus to the new page's heading so Tab/arrows start there
+      var h = $("#panel-" + step + " h2");
+      if (h) { if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1"); selfFocus(h); }
+    }
     readStep(step);
   }
 
@@ -724,6 +773,316 @@
       ask(V.idx || 0);
     } else readStep(V.step);
   }
+
+  // ==================================================================
+  // Keyboard navigation (for blind and keyboard-only users)
+  // ==================================================================
+  // While the assistant is on:
+  //   Tab / Shift+Tab   move between controls (browser default)
+  //   Up / Down arrows  move through everything: controls, headings and key text
+  //   Left / Right      change the choice in a drop-down list
+  //   Enter / Space     select (buttons, links, tick boxes, lists); Enter in an
+  //                     edit box confirms a typed answer and moves on
+  // Whatever gets focus is read aloud straight away. If it needs an answer, the
+  // mic opens after the assistant finishes so the user can just say it.
+  var PRESS = /^(press|press it|press enter|select|select it|click|click it|choose it|open|open it|activate|enter|ok|okay|go)( please)?$/;
+  var NAV_SEL = 'a[href], button:not([disabled]), summary, input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  var READ_SEL = ".panel.active h2, .panel.active h3, .panel.active .reasons li, .panel.active .kpis > *, .panel.active .notice, #modalBody h2, #modalBody p";
+  var lastKeyAt = 0;
+
+  function textOf(el) {
+    var t = el ? (el.innerText || el.textContent || "") : "";
+    // Drop arrows / emoji the speech engine would read out literally ("black right-pointing triangle").
+    return t.replace(/[←-⇿⌀-⏿■-➿⬀-⯿️]|[\uD83C-\uD83E][\uDC00-\uDFFF]/g, "").replace(/\s+/g, " ").trim();
+  }
+  function selfFocus(el) {
+    if (!el) return;
+    V.focusEl = el;
+    if (document.activeElement === el) return;
+    V.selfFocus = true; // our own focus moves aren't announced (the caller already speaks)
+    try { el.focus({ preventScroll: true }); } finally { V.selfFocus = false; }
+  }
+  function focused() {
+    var el = V.focusEl;
+    return el && document.activeElement === el && !el.closest("#voiceDock") ? el : null;
+  }
+  function isVisible(el) { return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length); }
+  function navRoot() {
+    if ($("#a11ySurvey")) return null; // the survey dialog does its own keyboard handling
+    return $("#modal").classList.contains("on") ? $("#modalBody") : document.body;
+  }
+  function navItems(root) {
+    return $$(NAV_SEL + ", " + READ_SEL, root).filter(isVisible);
+  }
+
+  // Move focus to the next / previous item in reading order.
+  function moveFocus(dir) {
+    var root = navRoot();
+    if (!root) return;
+    var items = navItems(root), cur = document.activeElement, i = items.indexOf(cur);
+    if (i < 0) { // focus is somewhere not in the list: continue from its position in the page
+      i = dir > 0 ? -1 : items.length;
+      if (cur && cur !== document.body) {
+        for (var k = 0; k < items.length; k++) {
+          if (cur.compareDocumentPosition(items[k]) & Node.DOCUMENT_POSITION_FOLLOWING) { i = dir > 0 ? k - 1 : k; break; }
+        }
+      }
+    }
+    var nxt = items[i + dir];
+    if (!nxt) return say(dir > 0 ? "End of the page. Press the up arrow to go back." : "Top of the page.");
+    if (!nxt.matches(NAV_SEL) && !nxt.hasAttribute("tabindex")) nxt.setAttribute("tabindex", "-1"); // text: focusable by script only
+    V.navFocus = true;
+    try { nxt.focus(); } finally { V.navFocus = false; }
+    if (nxt.scrollIntoView) nxt.scrollIntoView({ block: "nearest" });
+  }
+
+  function nameOf(el) {
+    if (el.getAttribute("aria-label")) return el.getAttribute("aria-label");
+    if (el.matches("[data-choose]")) {
+      var card = el.closest(".offer"), c = offerCards().filter(function (x) { return x.el === card; })[0];
+      if (c) return "Choose option " + c.n + ", " + c.name + ". APR " + c.apr.replace("%", " percent") + ", " + c.monthly + " a month, total " + c.total + ", approval " + c.odds;
+    }
+    if (el.matches("[data-toggle]")) return textOf(el).replace(/(\d+) \/ (\d+) pts/, "$1 of $2 points");
+    if (el.id) {
+      var l = document.querySelector('label[for="' + el.id + '"]');
+      if (l) return textOf(l).replace(/\s*\*$/, "");
+    }
+    var wrap = el.closest("label");
+    if (wrap) return textOf(wrap) || "Upload a bank statement";
+    return textOf(el) || el.title || el.placeholder || "";
+  }
+
+  // What to say when an element gets focus: {text, hint}.
+  function describe(el) {
+    var name = nameOf(el), tag = el.tagName, type = (el.type || "").toLowerCase(), text, hint = "";
+    if (tag === "SELECT") {
+      text = name + ", drop-down list, " + (el.selectedOptions[0] ? textOf(el.selectedOptions[0]) : "nothing") + " selected.";
+      hint = "Say your choice, or use the left and right arrows to change it.";
+    } else if (type === "checkbox" || type === "radio") {
+      var word = type === "radio" ? "selected" : "ticked";
+      text = name + ", " + (type === "radio" ? "option" : "tick box") + ", " + (el.checked ? word : "not " + word) + ".";
+      hint = "Press Space to " + (type === "radio" ? "select it." : "tick or untick it.");
+    } else if (type === "file") {
+      text = name + ", file upload button.";
+      hint = "Press Enter to choose a CSV file.";
+    } else if (tag === "INPUT" || tag === "TEXTAREA") {
+      var box = el.closest(".input"), unit = box && $(".unit", box), suf = box && $(".suffix", box);
+      var sfx = suf ? " " + ({ yrs: "years", "%": "percent" }[textOf(suf)] || textOf(suf)) : "";
+      text = name + ", edit box, " + (el.value ? (unit ? textOf(unit) : "") + el.value + sfx : "blank") + ".";
+      hint = "Say your answer, or type it and press Enter.";
+    } else if (tag === "A") {
+      text = name + ", link."; hint = "Press Enter to open it.";
+    } else if (tag === "SUMMARY") {
+      text = name + ", button, " + (el.parentNode.open ? "expanded" : "collapsed") + ".";
+      hint = "Press Enter to open or close it.";
+    } else if (tag === "BUTTON" || el.getAttribute("role") === "button") {
+      var st = [];
+      if (el.hasAttribute("aria-expanded")) st.push(el.getAttribute("aria-expanded") === "true" ? "expanded" : "collapsed");
+      if ((el.closest(".seg") && el.classList.contains("on")) || el.classList.contains("active")) st.push(el.classList.contains("step-btn") ? "current step" : "selected");
+      text = name + ", button" + (st.length ? ", " + st.join(", ") : "") + ".";
+      hint = el.hasAttribute("aria-expanded") ? "Press Enter to open or close it." : "Press Enter to select it.";
+    } else if (/^H[1-6]$/.test(tag)) {
+      text = "Heading: " + name + ".";
+    } else {
+      text = name + (/[.!?:]$/.test(name) ? "" : ".");
+    }
+    var err = el.id && document.getElementById(el.id + "_err");
+    if (err && textOf(err)) text += " Error: " + textOf(err);
+    return { text: text, hint: hint };
+  }
+  // Give each kind of hint the first two times only, so navigation stays quick.
+  function hintText(d) {
+    if (!d.hint) return "";
+    V.hinted[d.hint] = (V.hinted[d.hint] || 0) + 1;
+    return V.hinted[d.hint] <= 2 ? " " + d.hint : "";
+  }
+
+  // Which step-1 question does this element belong to? (-1 = none)
+  function queueIndexFor(el) {
+    var key = el.closest("#typeSeg") ? "_type" : el.closest("#form") ? (el.dataset.multi || (el.id && el.id.indexOf("f_") === 0 ? el.id.slice(2) : null)) : null;
+    if (!key) return -1;
+    var i = keyIndex(key);
+    if (i < 0) { V.queue = buildQueue(); i = keyIndex(key); }
+    return i;
+  }
+
+  function onFocusIn(e) {
+    var el = e.target;
+    if (!V.on || V.selfFocus || !el || el === document.body || el === document) return;
+    if (!V.navFocus && Date.now() - lastKeyAt > 1000) return; // mouse clicks and app focus moves aren't announced
+    if (el.closest("#a11ySurvey")) return;
+    V.focusEl = el;
+    var d = describe(el);
+    if (V.step === 1 && !el.closest("#voiceDock")) {
+      var idx = queueIndexFor(el);
+      if (idx >= 0) {
+        var item = V.queue[idx];
+        // Moving between the tick boxes of one question: just read the box.
+        if (item.kind === "checks" && V.phase === "ask" && V.idx === idx) return say(d.text + hintText(d));
+        if (item.kind === "type") return ask(idx, d.text + " ", { noFocus: true });
+        return ask(idx, "", { noFocus: true, suffix: (item.kind === "checks" ? " " + d.text : "") + hintText(d) });
+      }
+      V.phase = "focus";
+      highlight(null);
+    }
+    say(d.text + hintText(d));
+  }
+
+  function onKeyDown(e) {
+    if (e.key === "Tab" || /^Arrow/.test(e.key)) V.kb = true;
+    lastKeyAt = Date.now();
+    if (!V.on || e.altKey || e.ctrlKey || e.metaKey) return;
+    var el = e.target, tag = el.tagName || "", type = (el.type || "").toLowerCase();
+    if (el.closest && el.closest("#a11ySurvey")) return;
+    var modalOn = $("#modal").classList.contains("on");
+
+    if (e.key === "Escape" && modalOn) { // app.js closes it; we announce and restore focus
+      setTimeout(function () { if (!$("#modal").classList.contains("on")) afterModal("Closed. "); }, 0);
+      return;
+    }
+    if (e.key === "Tab" && modalOn) { // keep Tab inside the offer dialog
+      var f = navItems($("#modalBody")).filter(function (x) { return x.matches(NAV_SEL); });
+      var at = f.indexOf(el);
+      if (f.length && (e.shiftKey ? at <= 0 : at < 0 || at === f.length - 1)) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0].focus(); }
+      return;
+    }
+    if (e.shiftKey) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (type === "radio" || type === "range" || tag === "TEXTAREA" || el.isContentEditable) return; // arrows already mean something there
+      e.preventDefault(); // also stops number boxes counting up/down
+      return moveFocus(e.key === "ArrowDown" ? 1 : -1);
+    }
+    if (e.key === "Enter") return onEnter(e, el, tag, type);
+    if (e.key === " " && el.getAttribute && el.getAttribute("tabindex") === "-1") { e.preventDefault(); say(describe(el).text); }
+  }
+
+  function onEnter(e, el, tag, type) {
+    if (tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || tag === "TEXTAREA" || el.matches("[data-toggle]")) return; // browser / app.js handles these
+    if (type === "file") { e.preventDefault(); el.click(); return; }
+    if (type === "checkbox" || type === "radio") { e.preventDefault(); el.click(); say(describe(el).text); return; }
+    if (tag === "SELECT") {
+      e.preventDefault();
+      try { el.showPicker(); } catch (x) { say(describe(el).text + " Say your choice, or use the left and right arrows."); }
+      return;
+    }
+    if (tag === "INPUT") { e.preventDefault(); return commitTyped(el); }
+    if (el.getAttribute("tabindex") === "-1") { e.preventDefault(); say(describe(el).text); }
+  }
+
+  // Enter in an edit box: check the typed answer, then move on like a spoken one.
+  function commitTyped(el) {
+    if (V.step === 1) {
+      var idx = queueIndexFor(el);
+      if (idx < 0) return;
+      var item = V.queue[idx];
+      if (item.kind === "number" && el.value) {
+        var err = A.checkNumber(el, false);
+        A.setErr(el, err);
+        if (err) return say(err + " Please type it again, or say it.");
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      var shown = el.value ? (item.kind === "number" ? fmtValue(item, parseFloat(el.value)) : el.value) : "";
+      var got = shown ? "Got it, " + shown + ". " : "";
+      V.idx = idx; V.phase = "ask";
+      if (idx + 1 >= V.queue.length) end(got); else ask(idx + 1, got);
+      if (shown) showResult("✓ " + item.label + ": " + shown, "good");
+      return;
+    }
+    if (el.closest("#loanForm") && el.dataset.num) {
+      var v = parseFloat(el.value);
+      setLoan(el.id, el.value, nameOf(el) + " set to " + (el.id === "lf_amount" ? money(v || 0) : el.value + " percent") + ". ");
+    }
+  }
+
+  // "Press" by voice, or the Speak-free equivalent of Enter.
+  function activate(el) {
+    if (!el || !document.contains(el)) return say("Nothing is selected. Use Tab or the arrow keys to move.");
+    var tag = el.tagName, type = (el.type || "").toLowerCase();
+    if (tag === "SELECT") { try { el.showPicker(); } catch (x) {} return say(describe(el).text + " Say the option you want."); }
+    if (tag === "INPUT" && type !== "checkbox" && type !== "radio" && type !== "file") return say(describe(el).text + " Say your answer.");
+    el.click();
+    if (type === "checkbox" || type === "radio") say(describe(el).text);
+  }
+
+  // A spoken answer for the focused control on steps 2–4 (loan form, sort list).
+  function applyToFocused(el, alts) {
+    var i;
+    if (el.tagName === "SELECT") {
+      var opts = $$("option", el).map(function (o) { return [o.value, textOf(o)]; }), o = null;
+      for (i = 0; i < alts.length && !o; i++) o = matchOption(opts, alts[i]);
+      if (!o) { // "five years" -> the "5 yrs" option
+        var n = parseNumber(alts[0]);
+        if (n !== null) o = opts.filter(function (x) { return parseNumber(x[1]) === n || +x[0] === n; })[0] || null;
+      }
+      if (!o) return false;
+      if (el.closest("#loanForm")) { setLoan(el.id, o[0], nameOf(el) + ": " + o[1] + ". "); return true; }
+      el.value = o[0];
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      if (el.id === "sortBy") sayThenListen("Sorted by " + o[1] + ". " + offersText(0));
+      else say(describe(el).text);
+      return true;
+    }
+    if (el.tagName === "INPUT" && el.dataset.num && el.closest("#loanForm")) {
+      var v = null;
+      for (i = 0; i < alts.length && v === null; i++) v = parseNumber(alts[i]);
+      if (v === null) return false;
+      setLoan(el.id, v, nameOf(el) + " set to " + (el.id === "lf_amount" ? money(v) : v + " percent") + ". ");
+      return true;
+    }
+    return false;
+  }
+
+  // Lists and tick boxes changed with the keyboard: read the new value.
+  function onChange(e) {
+    var el = e.target;
+    if (!V.on || !e.isTrusted || el.closest("#a11ySurvey")) return;
+    var type = (el.type || "").toLowerCase();
+    if (el.tagName !== "SELECT" && type !== "checkbox" && type !== "radio") return;
+    if (el.closest("#loanForm")) { // app.js has already re-priced (and maybe re-drawn the form)
+      var again = document.getElementById(el.id) || el;
+      if (again !== document.activeElement && document.activeElement === document.body) selfFocus(again);
+      return say(describe(again).text + " " + rateLine());
+    }
+    if (el.id === "sortBy") return say("Sorted by " + textOf(el.selectedOptions[0]) + ". " + offersText(0));
+    say(describe(el).text);
+  }
+
+  // Button presses from the keyboard (or voice): read what happened.
+  function onClick(e) {
+    if (!V.on) return;
+    var t = e.target.closest && e.target.closest("[data-choose], [data-confirm], [data-close], button, a, summary, [data-toggle]");
+    if (!t || t.closest("#voiceDock") || t.closest("#a11ySurvey")) return;
+    if (t.matches("[data-choose]")) {
+      V.phase = "modal";
+      V.modalLender = t.dataset.choose;
+      if (V.kb) selfFocus($("#modalBody [data-confirm]"));
+      return say(modalText());
+    }
+    if (t.matches("[data-confirm]")) {
+      var name = textOf($("#modalBody h2"));
+      return afterModal("You've selected " + name + ". This is an indicative quote. The lender will run its own checks before making a final offer. ");
+    }
+    if (t.matches("[data-close]")) return afterModal("");
+    if (e.detail !== 0) return; // mouse click: the user can see what happened
+    var s = V.session;
+    setTimeout(function () { // only if nothing else (like a step change) has spoken
+      if (!V.on || V.session !== s) return;
+      if (t.id === "evalBtn" && A.state.step === 1) return say((textOf($("#formError")) || "Some answers need fixing.") + " Use the arrow keys to find the question.");
+      say(t.hasAttribute("aria-expanded") || t.tagName === "SUMMARY" || t.closest(".seg") ? describe(t).text : "Pressed " + nameOf(t) + ".");
+    }, 60);
+  }
+  function afterModal(msg) {
+    V.phase = "page";
+    if (V.kb) selfFocus($('[data-choose="' + V.modalLender + '"]') || $("[data-choose]") || $("#sortBy"));
+    sayThenListen(msg + "Back to the offers. Say choose and an option number, or use the arrow keys.");
+  }
+
+  document.addEventListener("keydown", onKeyDown, true);
+  document.addEventListener("mousedown", function () { lastKeyAt = 0; }, true);
+  document.addEventListener("focusin", onFocusIn);
+  document.addEventListener("change", onChange);
+  document.addEventListener("click", onClick);
 
   // ==================================================================
   // Microphone permission
@@ -852,7 +1211,7 @@
       '<div class="vd-ctrl2"><button type="button" class="btn sm" data-v="start" id="vdStart">Start voice assistant</button>' +
       '<button type="button" class="btn ghost sm" data-v="cancel" id="vdCancel">Cancel</button></div>' +
       '<label class="vd-hp"><input type="checkbox" id="vdHp"> 🎧 I am using headphones — let me interrupt by voice</label>' +
-      '<p class="vd-note">The mic turns on when I finish speaking, so I never mistake my own voice for yours. Then say <b>next</b>, <b>previous</b>, <b>repeat</b> or <b>cancel</b>. To interrupt me, press Speak or Alt+S. Keys: Alt+N next, Alt+P previous, Alt+R repeat, Alt+C cancel. Speech recognition is provided by your browser; Chrome and Edge send audio to their online speech service.</p>';
+      '<p class="vd-note">The mic turns on when I finish speaking, so I never mistake my own voice for yours. Then say <b>next</b>, <b>previous</b>, <b>repeat</b> or <b>cancel</b>. To interrupt me, press Speak or Alt+S. Move with Tab or the up and down arrows and I will read each item; press Enter or Space to select. Keys: Alt+N next, Alt+P previous, Alt+R repeat, Alt+C cancel. Speech recognition is provided by your browser; Chrome and Edge send audio to their online speech service.</p>';
     document.body.appendChild(dock);
 
     mini = document.createElement("button");

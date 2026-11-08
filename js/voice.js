@@ -198,36 +198,65 @@
     V.speaking = true;
     if (V.duplex) ensureListening(); else stopListening(); // mic off while talking
     synth.cancel();
-    // Split into sentences only where . ? ! is followed by a space, so "4.5" or "£1,234.56" stays whole.
-    var parts = text.split(/(?<=[.?!])\s+/).filter(function (p) { return p.trim(); });
-    if (!parts.length) parts = [text];
+    var parts = speechChunks(text);
     V.utts = [];
     V.speaking = true;
     setStatus("speaking");
-    parts.forEach(function (p, i) {
-      var u = new SpeechSynthesisUtterance(speakable(p.trim()));
+
+    // Speak the pieces ONE AT A TIME (the next starts when the previous ends).
+    // Queuing them all at once straight after cancel() makes Chrome/Edge — especially
+    // the online Google voices — drop everything after the first piece.
+    var i = 0, endWaitFrom = 0;
+    function finish() {
+      if (my !== V.session) return;
+      // Never open the mic while the engine is still making sound.
+      if (!endWaitFrom) endWaitFrom = Date.now();
+      if (synth.speaking && Date.now() - endWaitFrom < 4000) return setTimeout(finish, 50);
+      V.speaking = false; V.spokeEndAt = Date.now();
+      if (V.duplex) { ensureListening(); setStatus(V.rec ? "listening" : "idle"); }
+      else {
+        setStatus("idle");
+        setTimeout(function () {
+          if (my !== V.session || V.speaking) return;
+          ensureListening();
+          if (V.rec) setStatus("listening");
+        }, RESUME_DELAY);
+      }
+      if (then) then();
+    }
+    function next() {
+      if (my !== V.session) return;
+      if (i >= parts.length) return finish();
+      var p = parts[i++], done = false;
+      var u = new SpeechSynthesisUtterance(speakable(p));
       u.lang = "en-GB"; u.rate = V.rate;
       var v = pickVoice(); if (v) u.voice = v;
+      function advance() { if (done) return; done = true; clearTimeout(guard); next(); }
       u.onstart = function () { if (my === V.session) { V.prevSaying = V.saying; V.saying = p; } };
-      if (i === parts.length - 1) {
-        u.onend = u.onerror = function () {
-          if (my !== V.session) return;
-          V.speaking = false; V.spokeEndAt = Date.now();
-          if (V.duplex) { ensureListening(); setStatus(V.rec ? "listening" : "idle"); }
-          else {
-            setStatus("idle");
-            setTimeout(function () {
-              if (my !== V.session || V.speaking) return;
-              ensureListening();
-              if (V.rec) setStatus("listening");
-            }, RESUME_DELAY);
-          }
-          if (then) then();
-        };
-      }
+      u.onend = advance;
+      u.onerror = advance;
+      // Watchdog: some voices never fire onend. Move on after a generous estimate of the speaking time.
+      var guard = setTimeout(advance, 3000 + (p.length * 100) / (V.rate || 1));
       V.utts.push(u); // keep references so Chrome doesn't garbage-collect them mid-speech
+      if (synth.paused) synth.resume();
       synth.speak(u);
+    }
+    setTimeout(next, 60); // Chrome can silently drop an utterance spoken in the same tick as cancel()
+  }
+
+  // Group sentences into pieces of up to ~220 characters: short enough to avoid Chrome
+  // cutting off long utterances, long enough that "Employment status. Your answer: …"
+  // goes out as one piece. Splits only where . ? ! is followed by a space, so "4.5" stays whole.
+  var CHUNK = 220;
+  function speechChunks(text) {
+    var sents = String(text).split(/(?<=[.?!])\s+/).map(function (s) { return s.trim(); }).filter(Boolean);
+    var out = [], cur = "";
+    sents.forEach(function (s) {
+      if (cur && (cur + " " + s).length > CHUNK) { out.push(cur); cur = s; }
+      else cur = cur ? cur + " " + s : s;
     });
+    if (cur) out.push(cur);
+    return out.length ? out : [String(text)];
   }
 
   // Say decimals as "point": "4.5" -> "4 point 5", "8.45" -> "8 point 4 5" (digits after the point are read one by one).
@@ -329,12 +358,24 @@
 
   function sayThenListen(text) { say(text); }
   // Speak button / Alt+S: interrupts the assistant and opens the mic straight away.
+  // Interrupting: stop speaking, then open the mic only once the speech engine has
+  // actually gone quiet (plus a short gap), so the end of a sentence still coming
+  // out of the speakers can't be heard as the user.
+  var INTERRUPT_GAP = 150;
   function listen() {
-    if (V.speaking) stopSpeaking();
+    var wasTalking = V.speaking || !!(synth && synth.speaking);
+    if (V.speaking) stopSpeaking(); else if (wasTalking) synth.cancel();
     V.paused = false;
     V.restarts = [];
-    ensureListening();
-    if (V.rec) setStatus("listening");
+    function open() { ensureListening(); if (V.rec) setStatus("listening"); }
+    if (!wasTalking) return open();
+    var my = V.session, t0 = Date.now();
+    setStatus("idle");
+    (function whenQuiet() {
+      if (my !== V.session) return; // something new started speaking: it will reopen the mic itself
+      if (synth && synth.speaking && Date.now() - t0 < 800) return setTimeout(whenQuiet, 25);
+      setTimeout(function () { if (my === V.session && !V.speaking) open(); }, INTERRUPT_GAP);
+    })();
   }
 
   // ==================================================================
@@ -442,7 +483,8 @@
     }
     var err = fieldError(item);
     if (err && (prefix || "").indexOf(err) >= 0) err = "";
-    sayThenListen((prefix || "") + intro + "Question " + (V.idx + 1) + " of " + V.queue.length + ". " + (err ? "Error: " + err + " " : "") + question(item) + (opts.suffix || ""));
+    // The question number is shown in the panel's progress line but not spoken.
+    sayThenListen((prefix || "") + intro + (err ? "Error: " + err + " " : "") + question(item) + (opts.suffix || ""));
   }
 
   function itemEl(item) {
@@ -1552,7 +1594,7 @@
     status.onchange = function () {
       if (status.state === "granted") {
         V.micReady = true; remember();
-        V.listenOK = !!SR && (((K.accessibility && K.accessibility.get()) || {}).needs || []).some(function (n) { return n === "tts" || n === "stt"; });
+        V.listenOK = !!SR && (((K.accessibility && K.accessibility.get()) || {}).needs || []).some(function (n) { return n === "tts" || n === "stt" || n === "voice"; });
         renderButtons();
         notify("Microphone allowed. Press Speak to answer.", "good");
       } else if (status.state === "denied") {
@@ -1673,7 +1715,8 @@
   // ==================================================================
   function applyPrefs(p, fromSurvey) {
     var needs = (p && p.needs) || [];
-    var wantSpeak = needs.indexOf("tts") >= 0, wantListen = needs.indexOf("stt") >= 0 || wantSpeak;
+    // One "Voice assistant" option: reading aloud and spoken answers go together (older saves may have only one).
+    var wantSpeak = needs.some(function (n) { return n === "tts" || n === "stt" || n === "voice"; }), wantListen = wantSpeak;
     V.rate = { slow: 0.8, normal: 1, fast: 1.25 }[p && p.speechRate] || 1;
     V.speakOK = wantSpeak && !!synth;
     V.listenOK = wantListen && !!SR;

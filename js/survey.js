@@ -13,8 +13,9 @@
   var KEY = "kaml-accessibility";
 
   var NEEDS = [
-    { id: "tts", icon: "🔊", label: "Text to speech", desc: "Read pages, scores and explanations aloud" },
-    { id: "stt", icon: "🎙️", label: "Speech to text", desc: "Fill in forms by speaking instead of typing" },
+    // One option for both: it reads everything aloud and lets you answer by speaking.
+    // Saved as "tts" + "stt" so voice.js and preferences saved before the merge keep working.
+    { id: "voice", icon: "🎙️", label: "Voice assistant", desc: "Reads pages, scores and explanations aloud, and lets you fill in forms by speaking" },
     { id: "attention", icon: "⚡", label: "Short attention span", desc: "Play a short looping video at the side of the page" },
     { id: "dyslexia", icon: "📖", label: "Dyslexia-friendly font", desc: "OpenDyslexic typeface with wider letter spacing" }
   ];
@@ -37,6 +38,9 @@
   }
   var current = load();
 
+  // Older saves may have only one of the two.
+  function hasVoice(needs) { return (needs || []).some(function (n) { return n === "tts" || n === "stt" || n === "voice"; }); }
+
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
   function build() {
@@ -46,6 +50,7 @@
     var live = KamL.display ? KamL.display.get() : null;
     function ticked(id) {
       if (live && (id === "dyslexia" || id === "attention")) return live[id];
+      if (id === "voice") return hasVoice(p.needs);
       return p.needs.indexOf(id) >= 0;
     }
     var bg = document.createElement("div");
@@ -72,7 +77,7 @@
           '<span><b>' + esc(e.label) + '</b><span class="opt-desc">' + esc(e.desc) + "</span></span></label>";
       }).join("") + "</div></fieldset>" +
 
-      '<fieldset class="q" id="a11ySpeed"' + (p.needs.indexOf("tts") >= 0 ? "" : " hidden") + '><div class="q-title">3. How fast should text be read aloud?</div><div class="seg" role="radiogroup">' +
+      '<fieldset class="q" id="a11ySpeed"' + (hasVoice(p.needs) ? "" : " hidden") + '><div class="q-title">3. How fast should the voice assistant speak?</div><div class="seg" role="radiogroup">' +
       SPEED.map(function (s) {
         return '<label class="seg-opt"><input type="radio" name="speechRate" value="' + s[0] + '"' + (p.speechRate === s[0] ? " checked" : "") + "><span>" + s[1] + "</span></label>";
       }).join("") + "</div></fieldset>" +
@@ -89,7 +94,7 @@
       var boxes = form.querySelectorAll('input[name="needs"]');
       if (e.target.value === "none" && e.target.checked) boxes.forEach(function (b) { if (b.value !== "none") b.checked = false; });
       else if (e.target.checked) form.querySelector('input[value="none"]').checked = false;
-      form.querySelector("#a11ySpeed").hidden = !form.querySelector('input[value="tts"]').checked;
+      form.querySelector("#a11ySpeed").hidden = !form.querySelector('input[value="voice"]').checked;
     });
 
     function close(msg) {
@@ -118,11 +123,13 @@
       e.preventDefault();
       var needs = Array.prototype.map.call(form.querySelectorAll('input[name="needs"]:checked'), function (b) { return b.value; })
         .filter(function (v) { return v !== "none"; });
+      // "Voice assistant" turns on both reading aloud and speaking answers.
+      if (needs.indexOf("voice") >= 0) needs.splice(needs.indexOf("voice"), 1, "tts", "stt");
       var explain = (form.querySelector('input[name="explain"]:checked') || {}).value || "explained";
       var rate = (form.querySelector('input[name="speechRate"]:checked') || {}).value || "normal";
       save({ needs: needs, explain: explain, speechRate: rate, skipped: false, completedAt: new Date().toISOString() });
-      var LIVE = ["tts", "stt", "dyslexia", "attention"]; // voice.js, display.js
-      var live = needs.indexOf("tts") >= 0 || needs.indexOf("stt") >= 0;
+      var LIVE = ["voice", "dyslexia", "attention"]; // voice.js, display.js
+      var live = hasVoice(needs);
       var soon = NEEDS.filter(function (n) { return needs.indexOf(n.id) >= 0 && LIVE.indexOf(n.id) < 0; }).map(function (n) { return n.label; });
       var msg = live ? "Voice assistant is on — use the panel at the bottom right. " : "Thanks — your preferences are saved. ";
       if (soon.length) msg += soon.join(", ") + (soon.length > 1 ? " are" : " is") + " coming soon.";

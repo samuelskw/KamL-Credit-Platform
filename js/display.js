@@ -6,6 +6,10 @@
  *                   multiplied by (inline font sizes in generated HTML are
  *                   scaled directly), without zooming the layout,
  *                   so pages reflow instead of scrolling sideways.
+ *   - Dyslexia font: switches the whole page to OpenDyslexic (loaded from
+ *                   jsDelivr only when turned on) with extra letter, word
+ *                   and line spacing. Ticking "Dyslexia-friendly font" in the
+ *                   accessibility survey turns it on too.
  *   - Colour vision: swaps the status colours (good / warning / serious /
  *                   critical) and chart series colours for palettes that stay
  *                   distinguishable with protanopia, deuteranopia, tritanopia
@@ -14,7 +18,10 @@
  *
  * Choices are stored in localStorage ("kaml-display").
  *
- * API: KamL.display.get(), .set({ scale, cvd }), .open(), .close()
+ * app.js saves get() to the user's Firestore profile (preferences.display)
+ * whenever "kaml:display" fires, and calls set() with it after login.
+ *
+ * API: KamL.display.get(), .set({ scale, cvd, dyslexia }), .open(), .close()
  * Event: "kaml:display" on window with the new preferences as detail.
  */
 (function () {
@@ -37,7 +44,7 @@
     { id: "tritan", label: "Tritanopia", desc: "Blue-yellow: blues and greens look alike" },
     { id: "mono", label: "Monochrome", desc: "No colour: uses shades of grey only" }
   ];
-  var DEFAULTS = { scale: 1, cvd: "none" };
+  var DEFAULTS = { scale: 1, cvd: "none", dyslexia: false };
 
   // ------------------------------------------------------------------
   // Storage
@@ -45,7 +52,7 @@
   function load() {
     try {
       var v = JSON.parse(localStorage.getItem(KEY) || "null");
-      if (v && typeof v === "object") return { scale: validScale(v.scale), cvd: validCvd(v.cvd) };
+      if (v && typeof v === "object") return { scale: validScale(v.scale), cvd: validCvd(v.cvd), dyslexia: v.dyslexia === true };
     } catch (e) { /* storage blocked or corrupt */ }
     return null;
   }
@@ -113,16 +120,26 @@
     else root.setAttribute("data-cvd", cvd);
   }
 
+  // ------------------------------------------------------------------
+  // Dyslexia-friendly font (styles in css/styles.css under [data-dyslexia])
+  // ------------------------------------------------------------------
+  function applyDyslexia(on) {
+    if (on) root.setAttribute("data-dyslexia", "");
+    else root.removeAttribute("data-dyslexia");
+  }
+
   function apply(announce) {
     applyScale(prefs.scale);
     applyCvd(prefs.cvd);
+    applyDyslexia(prefs.dyslexia);
     syncPanel();
     if (announce) window.dispatchEvent(new CustomEvent("kaml:display", { detail: get() }));
   }
-  function get() { return { scale: prefs.scale, cvd: prefs.cvd }; }
+  function get() { return { scale: prefs.scale, cvd: prefs.cvd, dyslexia: prefs.dyslexia }; }
   function set(p) {
     if (p.scale !== undefined) prefs.scale = validScale(p.scale);
     if (p.cvd !== undefined) prefs.cvd = validCvd(p.cvd);
+    if (p.dyslexia !== undefined) prefs.dyslexia = p.dyslexia === true;
     store(prefs);
     apply(true);
   }
@@ -170,6 +187,12 @@
       "</div>" +
       '<p class="dp-note" id="dpScaleNote"></p></fieldset>' +
 
+      '<fieldset class="dp-group"><legend>Font</legend>' +
+      '<label class="opt dp-opt"><input type="checkbox" name="dpDyslexia">' +
+      '<span class="dp-text"><b class="dp-dys-sample">Dyslexia-friendly font</b>' +
+      '<span class="opt-desc">OpenDyslexic, with extra spacing between letters, words and lines</span></span></label>' +
+      "</fieldset>" +
+
       '<fieldset class="dp-group"><legend>Colour vision</legend><div class="dp-cvd">' +
       CVD.map(function (c) {
         return '<label class="opt dp-opt" data-cvd-preview="' + c.id + '">' +
@@ -186,10 +209,11 @@
     panel.addEventListener("change", function (e) {
       if (e.target.name === "dpScale") set({ scale: parseFloat(e.target.value) });
       if (e.target.name === "dpCvd") set({ cvd: e.target.value });
+      if (e.target.name === "dpDyslexia") set({ dyslexia: e.target.checked });
     });
     panel.querySelector("[data-dp-close]").addEventListener("click", function () { close(true); });
     panel.querySelector("[data-dp-reset]").addEventListener("click", function () {
-      set({ scale: 1, cvd: "none" });
+      set({ scale: 1, cvd: "none", dyslexia: false });
       toast("Display settings reset to default.");
     });
 
@@ -209,6 +233,7 @@
     Array.prototype.forEach.call(panel.querySelectorAll('input[name="dpCvd"]'), function (r) {
       r.checked = r.value === prefs.cvd;
     });
+    panel.querySelector('input[name="dpDyslexia"]').checked = prefs.dyslexia;
     var size = SIZES.filter(function (s) { return s.value === prefs.scale; })[0];
     panel.querySelector("#dpScaleNote").textContent = size.label + " · " + Math.round(size.value * 100) + "%";
   }
@@ -239,6 +264,18 @@
     setTimeout(function () { t.classList.add("out"); }, 3000);
     setTimeout(function () { t.remove(); }, 3600);
   }
+
+  // ------------------------------------------------------------------
+  // Survey: saving it with "Dyslexia-friendly font" ticked or unticked turns
+  // the font on or off. (survey.js pre-ticks the box from get().dyslexia, so
+  // the two stay in step.) A skipped survey changes nothing.
+  // ------------------------------------------------------------------
+  window.addEventListener("kaml:accessibility", function (e) {
+    var p = e.detail;
+    if (!p || p.skipped) return;
+    var want = (p.needs || []).indexOf("dyslexia") >= 0;
+    if (want !== prefs.dyslexia) set({ dyslexia: want });
+  });
 
   // ------------------------------------------------------------------
   // Init

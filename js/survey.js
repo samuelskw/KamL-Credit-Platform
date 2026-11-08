@@ -18,7 +18,7 @@
     { id: "focus", icon: "🎯", label: "Focus mode", desc: "Fewer details on screen and plain-English explanations of your finances" },
     { id: "contrast", icon: "◑", label: "High contrast", desc: "Stronger colours and borders" },
     { id: "motion", icon: "⏸️", label: "Reduced motion", desc: "No animations or transitions" },
-    { id: "dyslexia", icon: "📖", label: "Dyslexia-friendly font", desc: "Wider letter spacing and a clearer typeface" }
+    { id: "dyslexia", icon: "📖", label: "Dyslexia-friendly font", desc: "OpenDyslexic typeface with wider letter spacing" }
   ];
 
   var EXPLAIN = [
@@ -43,6 +43,10 @@
 
   function build() {
     var p = current || { needs: [], explain: "explained", speechRate: "normal" };
+    // The dyslexia font can also be switched in the Display panel (and comes
+    // from the user's saved account settings), so pre-tick from what's live.
+    var dyslexiaOn = KamL.display ? KamL.display.get().dyslexia : p.needs.indexOf("dyslexia") >= 0;
+    function ticked(id) { return id === "dyslexia" ? dyslexiaOn : p.needs.indexOf(id) >= 0; }
     var bg = document.createElement("div");
     bg.className = "modal-bg on";
     bg.id = "a11ySurvey";
@@ -54,7 +58,7 @@
 
       '<fieldset class="q"><div class="q-title">1. Which of these would help you? <span class="muted small">(choose any)</span></div><div class="opts">' +
       NEEDS.map(function (n) {
-        return '<label class="opt"><input type="checkbox" name="needs" value="' + n.id + '"' + (p.needs.indexOf(n.id) >= 0 ? " checked" : "") + '>' +
+        return '<label class="opt"><input type="checkbox" name="needs" value="' + n.id + '"' + (ticked(n.id) ? " checked" : "") + '>' +
           '<span class="opt-icon" aria-hidden="true">' + n.icon + '</span><span><b>' + esc(n.label) + '</b><span class="opt-desc">' + esc(n.desc) + "</span></span></label>";
       }).join("") +
       '<label class="opt"><input type="checkbox" name="needs" value="none"' + (current && !p.needs.length ? " checked" : "") + '>' +
@@ -116,7 +120,7 @@
       var explain = (form.querySelector('input[name="explain"]:checked') || {}).value || "explained";
       var rate = (form.querySelector('input[name="speechRate"]:checked') || {}).value || "normal";
       save({ needs: needs, explain: explain, speechRate: rate, skipped: false, completedAt: new Date().toISOString() });
-      var LIVE = ["tts", "stt"]; // implemented in voice.js
+      var LIVE = ["tts", "stt", "dyslexia"]; // voice.js, display.js
       var live = needs.indexOf("tts") >= 0 || needs.indexOf("stt") >= 0;
       var soon = NEEDS.filter(function (n) { return needs.indexOf(n.id) >= 0 && LIVE.indexOf(n.id) < 0; }).map(function (n) { return n.label; });
       var msg = live ? "Voice assistant is on — use the panel at the bottom right. " : "Thanks — your preferences are saved. ";

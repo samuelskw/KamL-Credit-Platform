@@ -402,3 +402,24 @@ body.has-voice main { padding-bottom: 340px; }
   #displayBtn { padding: 6px 10px; font-size: calc(13px * var(--fs, 1)); }
   .display-panel { left: 16px; right: 16px; width: auto; max-width: none; }
 }
+
+/* ---------- dyslexia-friendly font (js/display.js) ---------- */
+/* OpenDyslexic (SIL OFL 1.1) via Fontsource on jsDelivr. Browsers only fetch a
+   web font when text uses it, so nothing downloads until the setting is on. */
+@font-face { font-family: "OpenDyslexic"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url(https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.3.0/files/opendyslexic-latin-400-normal.woff2) format("woff2"); }
+@font-face { font-family: "OpenDyslexic"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url(https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.3.0/files/opendyslexic-latin-700-normal.woff2) format("woff2"); }
+@font-face { font-family: "OpenDyslexic"; font-style: italic; font-weight: 400; font-display: swap;
+  src: url(https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.3.0/files/opendyslexic-latin-400-italic.woff2) format("woff2"); }
+@font-face { font-family: "OpenDyslexic"; font-style: italic; font-weight: 700; font-display: swap;
+  src: url(https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.3.0/files/opendyslexic-latin-700-italic.woff2) format("woff2"); }
+
+:root[data-dyslexia] body,
+:root[data-dyslexia] svg text { font-family: "OpenDyslexic", "Comic Sans MS", system-ui, sans-serif; }
+:root[data-dyslexia] body { line-height: 1.75; letter-spacing: 0.02em; word-spacing: 0.04em; }
+:root[data-dyslexia] h1, :root[data-dyslexia] h2, :root[data-dyslexia] h3, :root[data-dyslexia] h4 { line-height: 1.4; letter-spacing: 0.01em; }
+:root[data-dyslexia] code { font-family: ui-monospace, Consolas, monospace; }
+/* OpenDyslexic runs wide: let the header wrap rather than overflow. */
+:root[data-dyslexia] .top .bar { height: auto; min-height: 60px; flex-wrap: wrap; row-gap: 8px; padding-top: 8px; padding-bottom: 8px; }
+.dp-dys-sample { font-family: "OpenDyslexic", system-ui, sans-serif; }

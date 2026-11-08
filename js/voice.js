@@ -149,16 +149,21 @@
   if (synth && "onvoiceschanged" in synth) synth.onvoiceschanged = function () { voiceCache = null; pickVoice(); };
 
   // Speak text (split into sentences — Chrome cuts off long utterances).
-  // The microphone keeps listening while we talk, so the user can interrupt
-  // with "next", "previous", "repeat" or "cancel" at any time.
+  // Half-duplex: browser speech recognition has no echo cancellation, so on
+  // speakers the microphone would hear the assistant and treat it as the user.
+  // The mic is therefore OFF while we talk and reopens shortly after. The user
+  // can interrupt with the Interrupt button / Alt+S. With headphones (V.duplex)
+  // the mic stays on so they can interrupt by voice.
+  var RESUME_DELAY = 450; // ms after speech ends, so the tail of our voice isn't captured
   function say(text, then) {
     V.lastSaid = text;
     V.saying = "";
     V.turn++; // anything heard from now on belongs to this prompt
     showPrompt(text);
     var my = ++V.session;
-    ensureListening();
-    if (!V.speakOK) { V.speaking = false; if (then) then(); return; }
+    if (!V.speakOK) { V.speaking = false; ensureListening(); if (then) then(); return; }
+    V.speaking = true;
+    if (V.duplex) ensureListening(); else stopListening(); // mic off while talking
     synth.cancel();
     var parts = text.match(/[^.?!]+[.?!]*/g) || [text];
     V.utts = [];
@@ -173,7 +178,15 @@
         u.onend = u.onerror = function () {
           if (my !== V.session) return;
           V.speaking = false; V.spokeEndAt = Date.now();
-          setStatus(V.rec ? "listening" : "idle");
+          if (V.duplex) { ensureListening(); setStatus(V.rec ? "listening" : "idle"); }
+          else {
+            setStatus("idle");
+            setTimeout(function () {
+              if (my !== V.session || V.speaking) return;
+              ensureListening();
+              if (V.rec) setStatus("listening");
+            }, RESUME_DELAY);
+          }
           if (then) then();
         };
       }
@@ -197,10 +210,12 @@
   // One continuous recogniser for the whole session (restarted if the browser ends it).
   function ensureListening() {
     if (!V.on || !V.listenOK || V.rec) return;
+    if (V.speaking && !V.duplex) return; // never listen to ourselves on speakers
     V.recWanted = true;
     var rec = new SR(), fatal = false;
     rec.lang = "en-GB"; rec.interimResults = true; rec.maxAlternatives = 3; rec.continuous = true;
     rec.onresult = function (e) {
+      if (V.rec !== rec) return; // late results from a recogniser we already stopped
       for (var r = e.resultIndex; r < e.results.length; r++) {
         var res = e.results[r], alts = [];
         for (var i = 0; i < res.length; i++) alts.push(res[i].transcript.trim());
@@ -251,7 +266,8 @@
   function route(alts) {
     if (!V.on) return;
     var text = alts[0];
-    if (isEcho(text)) return;
+    if (V.speaking && !V.duplex) return;
+    if (V.duplex && isEcho(text)) return;
     var item = V.step === 1 && V.phase === "ask" ? V.queue[V.idx] : null;
     var cmd = command(text, V.speaking || (item && item.kind === "text"));
     if (V.speaking) {
@@ -263,7 +279,13 @@
   }
 
   function sayThenListen(text) { say(text); }
-  function listen() { V.restarts = []; ensureListening(); if (V.rec) setStatus("listening"); }
+  // Speak button / Alt+S: interrupts the assistant and opens the mic straight away.
+  function listen() {
+    if (V.speaking) stopSpeaking();
+    V.restarts = [];
+    ensureListening();
+    if (V.rec) setStatus("listening");
+  }
 
   // ==================================================================
   // Step 1 — guided form
@@ -829,7 +851,8 @@
       '<button type="button" data-v="next">Next ▶</button></div>' +
       '<div class="vd-ctrl2"><button type="button" class="btn sm" data-v="start" id="vdStart">Start voice assistant</button>' +
       '<button type="button" class="btn ghost sm" data-v="cancel" id="vdCancel">Cancel</button></div>' +
-      '<p class="vd-note">Say <b>next</b>, <b>previous</b>, <b>repeat</b> or <b>cancel</b> at any time — even while I am speaking. Keys: Alt+N next, Alt+P previous, Alt+R repeat, Alt+C cancel. Headphones work best. Speech recognition is provided by your browser; Chrome and Edge send audio to their online speech service.</p>';
+      '<label class="vd-hp"><input type="checkbox" id="vdHp"> 🎧 I am using headphones — let me interrupt by voice</label>' +
+      '<p class="vd-note">The mic turns on when I finish speaking, so I never mistake my own voice for yours. Then say <b>next</b>, <b>previous</b>, <b>repeat</b> or <b>cancel</b>. To interrupt me, press Speak or Alt+S. Keys: Alt+N next, Alt+P previous, Alt+R repeat, Alt+C cancel. Speech recognition is provided by your browser; Chrome and Edge send audio to their online speech service.</p>';
     document.body.appendChild(dock);
 
     mini = document.createElement("button");
@@ -847,13 +870,24 @@
     // Keyboard shortcuts — work at any time, including while the assistant is speaking.
     document.addEventListener("keydown", function (e) {
       if (!V.on || !e.altKey || e.ctrlKey || e.metaKey) return;
-      var map = { n: "next", p: "prev", r: "repeat", c: "cancel" };
+      var map = { n: "next", p: "prev", r: "repeat", c: "cancel", s: "mic" };
       var a = map[(e.key || "").toLowerCase()];
       if (!a) return;
       e.preventDefault();
       button(a);
     });
+
+    // Headphones mode: no echo reaches the mic, so it can stay on while we talk.
+    var hp = $("#vdHp");
+    try { V.duplex = localStorage.getItem(HP_KEY) === "1"; } catch (e) { V.duplex = false; }
+    hp.checked = V.duplex;
+    hp.addEventListener("change", function () {
+      V.duplex = hp.checked;
+      try { localStorage.setItem(HP_KEY, V.duplex ? "1" : "0"); } catch (e) {}
+      if (V.on && V.speaking) { if (V.duplex) ensureListening(); else stopListening(); setStatus("speaking"); }
+    });
   }
+  var HP_KEY = "kaml-voice-headphones";
   function showDock() { dock.hidden = false; mini.hidden = true; document.body.classList.add("has-voice"); }
   function renderButtons() {
     $("#vdStart").hidden = V.on;
@@ -861,7 +895,13 @@
     $("#vdMic").hidden = !V.listenOK;
   }
   var STATUS = { idle: "Ready", speaking: "🔊 Speaking…", listening: "🎙 Listening…", paused: "Paused", off: "Off", type: "⌨ Type your answer" };
-  function setStatus(s) { var el = $("#vdStatus"); if (el) { el.textContent = STATUS[s] || s; el.dataset.s = s; } }
+  function setStatus(s) {
+    var el = $("#vdStatus");
+    var label = s === "speaking" && !V.duplex ? "🔊 Speaking · mic off" : STATUS[s] || s;
+    if (el) { el.textContent = label; el.dataset.s = s; }
+    var m = $("#vdMic");
+    if (m) m.textContent = V.speaking ? "✋ Interrupt" : "🎙 Speak";
+  }
   function setMic(on) { var m = $("#vdMic"); if (m) m.classList.toggle("on", on); }
   function setProgress(t) { $("#vdProgress").textContent = t; }
   function showPrompt(t) { $("#vdPrompt").textContent = t; }
